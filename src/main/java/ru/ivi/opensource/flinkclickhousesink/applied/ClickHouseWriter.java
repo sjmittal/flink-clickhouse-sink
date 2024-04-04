@@ -207,7 +207,7 @@ public class ClickHouseWriter implements AutoCloseable {
         }
 
         private Request buildRequest(ClickHouseRequestBlank requestBlank) {
-            String resultCSV = String.join(" , ", requestBlank.getValues());
+            String resultCSV = String.join(",", requestBlank.getValues());
             String query = String.format("INSERT INTO %s VALUES %s", requestBlank.getTargetTable(), resultCSV);
             String host = sinkSettings.getClickHouseClusterSettings().getRandomHostUrl();
 
