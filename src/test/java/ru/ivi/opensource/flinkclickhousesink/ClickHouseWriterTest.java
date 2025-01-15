@@ -280,7 +280,7 @@ public class ClickHouseWriterTest {
         ParameterTool parameters = ParameterTool.fromMap(params);
         env.getConfig().setGlobalJobParameters(parameters);
         env.getConfig().setRestartStrategy(RestartStrategies.noRestart());
-        env.getConfig().disableSysoutLogging();
+//        env.getConfig().disableSysoutLogging();
 
         Properties props = new Properties();
         props.put(ClickHouseSinkConst.TARGET_TABLE_NAME, "test.test1");

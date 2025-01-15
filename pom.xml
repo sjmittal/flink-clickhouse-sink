@@ -26,9 +26,9 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!-- Primary components -->
-        <java.version>1.8</java.version>
+        <java.version>17</java.version>
         <scala.version>2.11</scala.version>
-        <flink.version>1.9.0</flink.version>
+        <flink.version>1.19.1</flink.version>
 
         <!-- Secondary components -->
         <async.client.version>2.10.4</async.client.version>
@@ -129,7 +129,7 @@
 
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-streaming-java_${scala.version}</artifactId>
+            <artifactId>flink-streaming-java</artifactId>
             <version>${flink.version}</version>
         </dependency>
 
