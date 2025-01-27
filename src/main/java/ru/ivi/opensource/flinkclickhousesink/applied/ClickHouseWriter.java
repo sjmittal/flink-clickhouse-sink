@@ -190,7 +190,8 @@ public class ClickHouseWriter implements AutoCloseable {
                     ClickHouseRequestBlank<?> blank = queue.poll(300, TimeUnit.MILLISECONDS);
                     if (blank != null) {
                         logger.info(
-                          "Ready to load data to {}, batch size = {}, pending queue size = {}",
+                          "Task id = {} Ready to load data to {}, batch size = {}, pending queue size = {}",
+                          id,
                           blank.getTargetTable(),
                           blank.getValues().size(),
                           queueCounter.get());
@@ -200,13 +201,13 @@ public class ClickHouseWriter implements AutoCloseable {
                               client.insert(blank.getTargetTable(), blank.getValues());
                             complete(blank, future);
                         }  catch (Exception e) {
-                            logger.error("Error while inserting data", e);
+                            logger.error("Task id = {} Error while inserting data", id, e);
                             logFailedRecords(blank);
                         }
                     }
                 }
             } catch (Exception e) {
-                logger.error("Error while inserting data", e);
+                logger.error("Task id = {} Error while inserting data", id, e);
                 throw new RuntimeException(e);
             } finally {
                 logger.info("Task id = {} is finished", id);
@@ -218,7 +219,8 @@ public class ClickHouseWriter implements AutoCloseable {
                 if (throwable != null) {
                     handleUnsuccessfulResponse(throwable, requestBlank);
                 } else {
-                    logger.info("Successful send data to ClickHouse, pending queue size = {}, batch size = {}, target table = {}, current attempt = {}, time = {}",
+                    logger.info("Task id = {} Successful send data to ClickHouse, pending queue size = {}, batch size = {}, target table = {}, current attempt = {}, time = {}",
+                      id,
                       queueCounter.get(),
                       requestBlank.getValues().size(),
                       requestBlank.getTargetTable(),
@@ -233,12 +235,13 @@ public class ClickHouseWriter implements AutoCloseable {
         private void handleUnsuccessfulResponse(Throwable throwable, ClickHouseRequestBlank<?> requestBlank) {
             int currentCounter = requestBlank.getAttemptCounter();
             if (currentCounter >= sinkSettings.getMaxRetries()) {
-                logger.warn("Failed to send data to ClickHouse, cause: limit of attempts is exceeded." +
-                        " ClickHouse response = {}. Ready to flush data on s3.", throwable.getMessage());
+                logger.warn("Task id = {} Failed to send data to ClickHouse, cause: limit of attempts is exceeded." +
+                        " ClickHouse response = {}. Ready to flush data on s3.", id, throwable.getMessage());
                 logFailedRecords(requestBlank);
             } else {
                 requestBlank.incrementCounter();
-                logger.warn("Next attempt to send data to ClickHouse, table = {}, batch size = {}, current attempt num = {}, max attempt num = {}, response = {}",
+                logger.warn("Task id = {} Next attempt to send data to ClickHouse, table = {}, batch size = {}, current attempt num = {}, max attempt num = {}, response = {}",
+                        id,
                         requestBlank.getTargetTable(),
                         requestBlank.getValues().size(),
                         requestBlank.getAttemptCounter(),
@@ -278,12 +281,12 @@ public class ClickHouseWriter implements AutoCloseable {
                        new ByteArrayInputStream(outputStream.toByteArray())) {
                     s3Client.putObject(
                       putObjectRequest, RequestBody.fromInputStream(inputStream, outputStream.size()));
-                    logger.info("Successful send data on s3, path = {}, batch size = {} ", pathName, requestBlank.getValues().size());
+                    logger.info("Task id = {} Successful send data on s3, path = {}, batch size = {} ", id, pathName, requestBlank.getValues().size());
                 } catch (Exception e) {
-                    logger.error("Unknown exception while publishing data on s3 with path {} to S3", batchKey, e);
+                    logger.error("Task id = {} Unknown exception while publishing data on s3 with path {} to S3", id, batchKey, e);
                 }
             } catch (Exception e) {
-                logger.error("Unknown exception while publishing data on s3 with path {} to stream", batchKey, e);
+                logger.error("Task id = {} Unknown exception while publishing data on s3 with path {} to stream", id, batchKey, e);
             }
         }
 
