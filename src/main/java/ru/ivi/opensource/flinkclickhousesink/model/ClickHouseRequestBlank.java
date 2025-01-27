@@ -2,21 +2,20 @@ package ru.ivi.opensource.flinkclickhousesink.model;
 
 import java.util.List;
 
-public class ClickHouseRequestBlank {
-    private final List<String> values;
+public class ClickHouseRequestBlank<T> {
+    private final List<T> values;
     private final String targetTable;
     private int attemptCounter;
+    private long requestTime;
 
-    private Exception exception;
-
-    public ClickHouseRequestBlank(List<String> values, String targetTable, Exception exception) {
+    public ClickHouseRequestBlank(List<T> values, String targetTable) {
         this.values = values;
         this.targetTable = targetTable;
         this.attemptCounter = 0;
-        this.exception = exception;
+        this.requestTime = System.currentTimeMillis();
     }
 
-    public List<String> getValues() {
+    public List<T> getValues() {
         return values;
     }
 
@@ -32,43 +31,37 @@ public class ClickHouseRequestBlank {
         return targetTable;
     }
 
-    public Exception getException() {
-        return exception;
+    public long getRequestTime() {
+        return requestTime;
     }
 
-    public void setException(Exception exception) {
-        this.exception = exception;
+    public void setRequestTime(long requestTime) {
+        this.requestTime = requestTime;
     }
 
-    public static final class Builder {
-        private List<String> values;
+    public static final class Builder<T> {
+        private List<T> values;
         private String targetTable;
-        private Exception exception;
 
-        private Builder() {
+        private Builder(Class<T> clazz) {
         }
 
-        public static Builder aBuilder() {
-            return new Builder();
+        public static <T> Builder<T> aBuilder(Class<T> clazz) {
+            return new Builder<>(clazz);
         }
 
-        public Builder withValues(List<String> values) {
+        public Builder<T> withValues(List<T> values) {
             this.values = values;
             return this;
         }
 
-        public Builder withTargetTable(String targetTable) {
+        public Builder<T> withTargetTable(String targetTable) {
             this.targetTable = targetTable;
             return this;
         }
 
-        public Builder withException(Exception exception) {
-            this.exception = exception;
-            return this;
-        }
-
-        public ClickHouseRequestBlank build() {
-            return new ClickHouseRequestBlank(values, targetTable, exception);
+        public ClickHouseRequestBlank<T> build() {
+            return new ClickHouseRequestBlank<>(values, targetTable);
         }
     }
 
@@ -76,9 +69,9 @@ public class ClickHouseRequestBlank {
     public String toString() {
         return "ClickHouseRequestBlank{" +
                 "values=" + values +
-                ", targetTable='" + targetTable + '\'' +
+                ", targetTable='" + targetTable  +
                 ", attemptCounter=" + attemptCounter +
-                ", exception=" + exception +
+                ", requestTime=" + requestTime +
                 '}';
     }
 }
