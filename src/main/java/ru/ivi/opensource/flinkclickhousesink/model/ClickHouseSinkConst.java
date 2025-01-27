@@ -12,5 +12,5 @@ public final class ClickHouseSinkConst {
     public static final String TIMEOUT_SEC = "clickhouse.sink.timeout-sec";
     public static final String NUM_RETRIES = "clickhouse.sink.retries";
     public static final String FAILED_RECORDS_PATH = "clickhouse.sink.failed-records-path";
-    public static final String IGNORING_CLICKHOUSE_SENDING_EXCEPTION_ENABLED = "clickhouse.sink.ignoring-clickhouse-sending-exception-enabled";
+
 }
