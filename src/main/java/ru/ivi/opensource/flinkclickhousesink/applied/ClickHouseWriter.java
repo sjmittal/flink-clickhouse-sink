@@ -202,7 +202,8 @@ public class ClickHouseWriter implements AutoCloseable {
                             complete(blank, future);
                         }  catch (Exception e) {
                             logger.error("Task id = {} Error while inserting data", id, e);
-                            logFailedRecords(blank);
+                            queueCounter.decrementAndGet();
+                            handleUnsuccessfulResponse(e, blank);
                         }
                     }
                 }
