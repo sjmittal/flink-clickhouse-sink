@@ -16,10 +16,12 @@ public class ClickHouseClusterSettings {
     public static final String CLICKHOUSE_HOSTS = "clickhouse.access.hosts";
     public static final String CLICKHOUSE_USER = "clickhouse.access.user";
     public static final String CLICKHOUSE_PASSWORD = "clickhouse.access.password";
+    public static final String CLICKHOUSE_DB = "clickhouse.access.db";
 
     private final List<String> hostsWithPorts;
     private final String user;
     private final String password;
+    private final String database;
     private final String credentials;
     private final boolean authorizationRequired;
 
@@ -42,12 +44,15 @@ public class ClickHouseClusterSettings {
             password = parameters.get(CLICKHOUSE_PASSWORD);
 
             credentials = buildCredentials(user, password);
+
+            database = parameters.getOrDefault(CLICKHOUSE_DB, "default");
             authorizationRequired = true;
         } else {
             // avoid NPE
             credentials = "";
             password = "";
             user = "";
+            database = "default";
             authorizationRequired = false;
         }
     }
@@ -100,6 +105,10 @@ public class ClickHouseClusterSettings {
         return password;
     }
 
+    public String getDatabase() {
+        return database;
+    }
+
     public String getCredentials() {
         return credentials;
     }
@@ -112,6 +121,7 @@ public class ClickHouseClusterSettings {
     public String toString() {
         return "ClickHouseClusterSettings{" +
                 "hostsWithPorts=" + hostsWithPorts +
+                ", database='" + database + '\'' +
                 ", credentials='" + credentials + '\'' +
                 ", authorizationRequired=" + authorizationRequired +
                 ", currentHostId=" + currentHostId +

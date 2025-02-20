@@ -28,7 +28,7 @@ public class ClickHouseSinkManager implements AutoCloseable {
           .addEndpoint(sinkParams.getClickHouseClusterSettings().getRandomHostUrl())
           .setUsername(sinkParams.getClickHouseClusterSettings().getUser())
           .setPassword(sinkParams.getClickHouseClusterSettings().getPassword())
-          .setDefaultDatabase(sinkParams.getClickHouseClusterSettings().getUser())
+          .setDefaultDatabase(sinkParams.getClickHouseClusterSettings().getDatabase())
           .setConnectionRequestTimeout(60, ChronoUnit.SECONDS)
           .setConnectTimeout(60, ChronoUnit.SECONDS)
           .setSocketTimeout(30, ChronoUnit.SECONDS)
