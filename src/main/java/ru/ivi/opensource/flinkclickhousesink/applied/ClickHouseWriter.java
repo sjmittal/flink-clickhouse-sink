@@ -9,8 +9,11 @@ import org.slf4j.LoggerFactory;
 import ru.ivi.opensource.flinkclickhousesink.model.ClickHouseRequestBlank;
 import ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkCommonParams;
 import ru.ivi.opensource.flinkclickhousesink.util.ThreadUtil;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.InstanceProfileCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
@@ -47,9 +50,19 @@ public class ClickHouseWriter implements AutoCloseable {
         this.commonQueue = new LinkedBlockingQueue<>(sinkParams.getQueueMaxCapacity());
         this.client = client;
 
-        s3Client = S3Client.builder()
-          .credentialsProvider(InstanceProfileCredentialsProvider.create())
-          .build();
+        if (sinkParams.getFailedRecordsRegion() != null) {
+            s3Client = S3Client
+              .builder()
+              .region(Region.of(sinkParams.getFailedRecordsRegion()))
+              .credentialsProvider(StaticCredentialsProvider.create(
+                AwsBasicCredentials.create(
+                  sinkParams.getFailedRecordsAccessKey(), sinkParams.getFailedRecordsSecretKey())))
+              .build();
+        } else {
+            s3Client = S3Client.builder()
+              .credentialsProvider(InstanceProfileCredentialsProvider.create())
+              .build();
+        }
 
         initDirAndExecutors();
     }

@@ -4,7 +4,10 @@ import com.google.common.base.Preconditions;
 
 import java.util.Map;
 
+import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.FAILED_RECORDS_ACCESS_KEY;
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.FAILED_RECORDS_PATH;
+import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.FAILED_RECORDS_REGION;
+import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.FAILED_RECORDS_SECRET_KEY;
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.NUM_RETRIES;
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.NUM_WRITERS;
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.QUEUE_MAX_CAPACITY;
@@ -14,6 +17,9 @@ public class ClickHouseSinkCommonParams {
 
     private final ClickHouseClusterSettings clickHouseClusterSettings;
     private final String failedRecordsPath;
+    private final String failedRecordsRegion;
+    private final String failedRecordsAccessKey;
+    private final String failedRecordsSecretKey;
     private final int numWriters;
     private final int queueMaxCapacity;
     private final int timeout;
@@ -26,8 +32,15 @@ public class ClickHouseSinkCommonParams {
         this.maxRetries = Integer.parseInt(params.get(NUM_RETRIES));
         this.timeout = Integer.parseInt(params.get(TIMEOUT_SEC));
         this.failedRecordsPath = params.get(FAILED_RECORDS_PATH);
+        this.failedRecordsRegion = params.get(FAILED_RECORDS_REGION);
+        this.failedRecordsAccessKey = params.get(FAILED_RECORDS_ACCESS_KEY);
+        this.failedRecordsSecretKey = params.get(FAILED_RECORDS_SECRET_KEY);
 
         Preconditions.checkNotNull(failedRecordsPath);
+        if (failedRecordsRegion != null) {
+            Preconditions.checkNotNull(failedRecordsAccessKey);
+            Preconditions.checkNotNull(failedRecordsSecretKey);
+        }
         Preconditions.checkArgument(queueMaxCapacity > 0);
         Preconditions.checkArgument(numWriters > 0);
         Preconditions.checkArgument(timeout > 0);
@@ -58,11 +71,26 @@ public class ClickHouseSinkCommonParams {
         return failedRecordsPath;
     }
 
+    public String getFailedRecordsRegion() {
+        return failedRecordsRegion;
+    }
+
+    public String getFailedRecordsAccessKey() {
+        return failedRecordsAccessKey;
+    }
+
+    public String getFailedRecordsSecretKey() {
+        return failedRecordsSecretKey;
+    }
+
     @Override
     public String toString() {
         return "ClickHouseSinkCommonParams{" +
                 "clickHouseClusterSettings=" + clickHouseClusterSettings +
                 ", failedRecordsPath='" + failedRecordsPath + '\'' +
+                ", failedRecordsRegion='" + failedRecordsRegion + '\'' +
+                ", failedRecordsAccessKey='" + failedRecordsAccessKey + '\'' +
+                ", failedRecordsSecretKey='" + failedRecordsSecretKey + '\'' +
                 ", numWriters=" + numWriters +
                 ", queueMaxCapacity=" + queueMaxCapacity +
                 ", timeout=" + timeout +
