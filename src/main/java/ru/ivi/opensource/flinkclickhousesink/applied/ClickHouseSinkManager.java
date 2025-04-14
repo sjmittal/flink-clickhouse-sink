@@ -1,6 +1,7 @@
 package ru.ivi.opensource.flinkclickhousesink.applied;
 
 import com.clickhouse.client.api.Client;
+import com.clickhouse.client.api.internal.ServerSettings;
 import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,7 +33,9 @@ public class ClickHouseSinkManager implements AutoCloseable {
           .compressClientRequest(true)
           .compressServerResponse(true)
           .useHttpCompression(true)
-          .setLZ4UncompressedBufferSize(64 * 1024)
+          .serverSetting("allow_experimental_json_type", "1")
+          .serverSetting(ServerSettings.INPUT_FORMAT_BINARY_READ_JSON_AS_STRING, "1")
+          .serverSetting(ServerSettings.OUTPUT_FORMAT_BINARY_WRITE_JSON_AS_STRING, "1")
           .enableConnectionPool(true)
           .setConnectionRequestTimeout(60, ChronoUnit.SECONDS)
           .setConnectTimeout(60, ChronoUnit.SECONDS)
