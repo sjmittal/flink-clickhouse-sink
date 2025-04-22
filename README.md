@@ -8,16 +8,14 @@ Powered by [Clickhouse V2 Client](https://github.com/ClickHouse/clickhouse-java/
 
 High-performance library for loading data to ClickHouse. 
 
-It has two triggers for loading data:
-_by timeout_ and _by buffer size_.
+- It has two triggers for loading data: _by timeout_ and _by buffer size_.
+- Failures are written to S3.
 
 ##### Version map
 | flink  | flink-clickhouse-sink | 
 |:------:|:---------------------:| 
-| 1.3.*  |         1.0.0         |
-| 1.9.*  |         1.3.4         |
-| 1.9.*  |         1.4.*         |
-| 1.19.* |         1.4.2         |
+| 1.19.* |         1.4.7         |
+| 1.20.* |         1.4.7         |
 
 ### Install
 
@@ -27,7 +25,7 @@ _by timeout_ and _by buffer size_.
 <dependency>
   <groupId>ru.ivi.opensource</groupId>
   <artifactId>flink-clickhouse-sink</artifactId>
-  <version>1.4.2</version>
+  <version>1.4.7</version>
 </dependency>
 ```
 
@@ -46,9 +44,14 @@ common and for each sink in you operators chain.
  
  `clickhouse.sink.retries` - max number of retries,
  
- `clickhouse.sink.failed-records-path`- s3 path for failed records,
- 
- 
+ `clickhouse.sink.failed-records-path`- s3 bucket for failed records,
+
+ `clickhouse.sink.failed-records-region`- s3 region for failed records,
+
+ `clickhouse.sink.failed-records-access-key`- s3 access key for failed records,
+
+ `clickhouse.sink.failed-records-secret-key`- s3 secret key for failed records,
+
 **The sink part** (use in chain):
 
  `clickhouse.sink.target-table` - target table in ClickHouse,
@@ -75,7 +78,6 @@ globalParameters.put(ClickHouseSinkConst.FAILED_RECORDS_PATH, ...);
 globalParameters.put(ClickHouseSinkConst.NUM_WRITERS, ...);
 globalParameters.put(ClickHouseSinkConst.NUM_RETRIES, ...);
 globalParameters.put(ClickHouseSinkConst.QUEUE_MAX_CAPACITY, ...);
-globalParameters.put(ClickHouseSinkConst.IGNORING_CLICKHOUSE_SENDING_EXCEPTION_ENABLED, ...);
 
 // set global paramaters
 ParameterTool parameters = ParameterTool.fromMap(buildGlobalParameters(config));
@@ -84,7 +86,6 @@ environment.getConfig().setGlobalJobParameters(parameters);
 ```
 
 
-
 ## Roadmap
-- [ ] reading files from "failed-records-path"
-- [ ] migrate to gradle
+- [ ] handle "failed-records" for other providers
+- [ ] add test cases
