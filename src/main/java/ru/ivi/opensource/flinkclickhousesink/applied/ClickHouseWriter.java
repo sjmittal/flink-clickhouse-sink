@@ -1,26 +1,27 @@
 package ru.ivi.opensource.flinkclickhousesink.applied;
 
+import com.clickhouse.client.api.Client;
+import com.clickhouse.client.api.insert.InsertResponse;
 import com.google.common.collect.Lists;
-import io.netty.handler.codec.http.HttpHeaderNames;
-import org.asynchttpclient.AsyncHttpClient;
-import org.asynchttpclient.BoundRequestBuilder;
-import org.asynchttpclient.Dsl;
-import org.asynchttpclient.ListenableFuture;
-import org.asynchttpclient.Request;
-import org.asynchttpclient.Response;
+import com.google.gson.Gson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.ivi.opensource.flinkclickhousesink.model.ClickHouseRequestBlank;
 import ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkCommonParams;
-import ru.ivi.opensource.flinkclickhousesink.util.FutureUtil;
 import ru.ivi.opensource.flinkclickhousesink.util.ThreadUtil;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.InstanceProfileCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -32,32 +33,42 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class ClickHouseWriter implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(ClickHouseWriter.class);
+    private static final Gson gson = new Gson();
 
-    private final BlockingQueue<ClickHouseRequestBlank> commonQueue;
+    private final transient Client client;
+    private final transient S3Client s3Client;
+
+    private final BlockingQueue<ClickHouseRequestBlank<?>> commonQueue;
     private final AtomicLong unprocessedRequestsCounter = new AtomicLong();
-    private final AsyncHttpClient asyncHttpClient;
-    private final List<CompletableFuture<Boolean>> futures;
     private final ClickHouseSinkCommonParams sinkParams;
 
     private ExecutorService service;
-    private ExecutorService callbackService;
     private List<WriterTask> tasks;
 
-    public ClickHouseWriter(ClickHouseSinkCommonParams sinkParams, List<CompletableFuture<Boolean>> futures) {
-        this(sinkParams, futures, Dsl.asyncHttpClient());
-    }
-
-    public ClickHouseWriter(ClickHouseSinkCommonParams sinkParams, List<CompletableFuture<Boolean>> futures, AsyncHttpClient asyncHttpClient) {
+    public ClickHouseWriter(ClickHouseSinkCommonParams sinkParams, Client client) {
         this.sinkParams = sinkParams;
-        this.futures = futures;
         this.commonQueue = new LinkedBlockingQueue<>(sinkParams.getQueueMaxCapacity());
-        this.asyncHttpClient = asyncHttpClient;
+        this.client = client;
+
+        if (sinkParams.getFailedRecordsRegion() != null) {
+            s3Client = S3Client
+              .builder()
+              .region(Region.of(sinkParams.getFailedRecordsRegion()))
+              .credentialsProvider(StaticCredentialsProvider.create(
+                AwsBasicCredentials.create(
+                  sinkParams.getFailedRecordsAccessKey(), sinkParams.getFailedRecordsSecretKey())))
+              .build();
+        } else {
+            s3Client = S3Client.builder()
+              .credentialsProvider(InstanceProfileCredentialsProvider.create())
+              .build();
+        }
+
         initDirAndExecutors();
     }
 
     private void initDirAndExecutors() {
         try {
-            initDir(sinkParams.getFailedRecordsPath());
             buildComponents();
         } catch (Exception e) {
             logger.error("Error while starting CH writer", e);
@@ -65,10 +76,6 @@ public class ClickHouseWriter implements AutoCloseable {
         }
     }
 
-    private static void initDir(String pathName) throws IOException {
-        Path path = Paths.get(pathName);
-        Files.createDirectories(path);
-    }
 
     private void buildComponents() {
         logger.info("Building components");
@@ -76,50 +83,66 @@ public class ClickHouseWriter implements AutoCloseable {
         ThreadFactory threadFactory = ThreadUtil.threadFactory("clickhouse-writer");
         service = Executors.newFixedThreadPool(sinkParams.getNumWriters(), threadFactory);
 
-        ThreadFactory callbackServiceFactory = ThreadUtil.threadFactory("clickhouse-writer-callback-executor");
-        callbackService = Executors.newCachedThreadPool(callbackServiceFactory);
-
         int numWriters = sinkParams.getNumWriters();
         tasks = Lists.newArrayListWithCapacity(numWriters);
         for (int i = 0; i < numWriters; i++) {
-            WriterTask task = new WriterTask(i, asyncHttpClient, commonQueue, sinkParams, callbackService, futures, unprocessedRequestsCounter);
+            WriterTask task = new WriterTask(i, client, s3Client, commonQueue, sinkParams, unprocessedRequestsCounter);
             tasks.add(task);
             service.submit(task);
         }
     }
 
-    public void put(ClickHouseRequestBlank params) {
-        try {
+    public void put(ClickHouseRequestBlank<?> params) {
+        boolean offered = commonQueue.offer(params);
+        if (!offered) {
+            logFailedRecords(params);
+        } else {
             unprocessedRequestsCounter.incrementAndGet();
-            commonQueue.put(params);
-        } catch (InterruptedException e) {
-            logger.error("Interrupted error while putting data to queue", e);
-            Thread.currentThread().interrupt();
-            throw new RuntimeException(e);
         }
     }
 
-    private void waitUntilAllFuturesDone() {
-        logger.info("Wait until all futures are done or completed exceptionally. Futures size: {}", futures.size());
-        try {
-            while (unprocessedRequestsCounter.get() > 0 || !futures.isEmpty()) {
-                if (logger.isDebugEnabled()) {
-                    logger.debug("Futures size: {}.", futures.size());
-                }
-                CompletableFuture<Void> future = FutureUtil.allOf(futures);
+    private void logFailedRecords(ClickHouseRequestBlank<?> requestBlank) {
+        String pathName = String.format("failed_records/%s", requestBlank.getTargetTable());
+        String batchKey = String.format("%s/%s_", pathName, System.currentTimeMillis());
+
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            List<?> records = requestBlank.getValues();
+            for (Object record: records) {
                 try {
-                    future.get();
-                    futures.removeIf(f -> f.isDone() && !f.isCompletedExceptionally());
-                    if (logger.isDebugEnabled()) {
-                        logger.debug("Futures size after removing: {}", futures.size());
-                    }
+                    outputStream.write(gson.toJson(record).getBytes(StandardCharsets.UTF_8));
                 } catch (Exception e) {
-                    throw new RuntimeException(e);
+                    //
                 }
+            }
+
+            PutObjectRequest putObjectRequest =
+              PutObjectRequest.builder()
+                .bucket(sinkParams.getFailedRecordsPath())
+                .key(batchKey + UUID.randomUUID())
+                .contentLength((long) outputStream.size())
+                .build();
+
+            try (ByteArrayInputStream inputStream =
+                   new ByteArrayInputStream(outputStream.toByteArray())) {
+                s3Client.putObject(
+                  putObjectRequest, RequestBody.fromInputStream(inputStream, outputStream.size()));
+                logger.info("Successful send data on s3, path = {}, batch size = {} ", pathName, requestBlank.getValues().size());
+            } catch (Exception e) {
+                logger.error("Unknown exception while publishing data on s3 with path {} to S3", batchKey, e);
+            }
+        } catch (Exception e) {
+            logger.error("Unknown exception while publishing data on s3 with path {} to stream", batchKey, e);
+        }
+    }
+
+    private void waitUntilAllRequestsDone() throws InterruptedException {
+        try {
+            if (unprocessedRequestsCounter.get() > 0 || commonQueue.size() > 0) {
+                logger.info("request queue size: {}, pending requests size: {}", commonQueue.size(), unprocessedRequestsCounter.get());
+                Thread.sleep(sinkParams.getTimeout() * 1000L);
             }
         } finally {
             stopWriters();
-            futures.clear();
         }
     }
 
@@ -135,11 +158,11 @@ public class ClickHouseWriter implements AutoCloseable {
     public void close() throws Exception {
         logger.info("ClickHouseWriter is shutting down.");
         try {
-            waitUntilAllFuturesDone();
+            waitUntilAllRequestsDone();
         } finally {
             ThreadUtil.shutdownExecutorService(service);
-            ThreadUtil.shutdownExecutorService(callbackService);
-            asyncHttpClient.close();
+            s3Client.close();
+            client.close();
             logger.info("{} shutdown complete.", ClickHouseWriter.class.getSimpleName());
         }
     }
@@ -147,32 +170,26 @@ public class ClickHouseWriter implements AutoCloseable {
     static class WriterTask implements Runnable {
         private static final Logger logger = LoggerFactory.getLogger(WriterTask.class);
 
-        private static final int HTTP_OK = 200;
-
-        private final BlockingQueue<ClickHouseRequestBlank> queue;
+        private final BlockingQueue<ClickHouseRequestBlank<?>> queue;
         private final AtomicLong queueCounter;
         private final ClickHouseSinkCommonParams sinkSettings;
-        private final AsyncHttpClient asyncHttpClient;
-        private final ExecutorService callbackService;
-        private final List<CompletableFuture<Boolean>> futures;
-
+        private final Client client;
+        private final S3Client s3Client;
         private final int id;
 
         private volatile boolean isWorking;
 
         WriterTask(int id,
-                   AsyncHttpClient asyncHttpClient,
-                   BlockingQueue<ClickHouseRequestBlank> queue,
+                   Client client,
+                   S3Client s3Client,
+                   BlockingQueue<ClickHouseRequestBlank<?>> queue,
                    ClickHouseSinkCommonParams settings,
-                   ExecutorService callbackService,
-                   List<CompletableFuture<Boolean>> futures,
                    AtomicLong queueCounter) {
             this.id = id;
             this.sinkSettings = settings;
             this.queue = queue;
-            this.callbackService = callbackService;
-            this.asyncHttpClient = asyncHttpClient;
-            this.futures = futures;
+            this.client = client;
+            this.s3Client = s3Client;
             this.queueCounter = queueCounter;
         }
 
@@ -183,110 +200,108 @@ public class ClickHouseWriter implements AutoCloseable {
 
                 logger.info("Start writer task, id = {}", id);
                 while (isWorking || queue.size() > 0) {
-                    ClickHouseRequestBlank blank = queue.poll(300, TimeUnit.MILLISECONDS);
+                    ClickHouseRequestBlank<?> blank = queue.poll(300, TimeUnit.MILLISECONDS);
                     if (blank != null) {
-                        CompletableFuture<Boolean> future = new CompletableFuture<>();
-                        futures.add(future);
-                        send(blank, future);
+                        logger.info(
+                          "Task id = {} Ready to load data to {}, batch size = {}, pending queue size = {}",
+                          id,
+                          blank.getTargetTable(),
+                          blank.getValues().size(),
+                          queueCounter.get());
+                        blank.setRequestTime(System.currentTimeMillis());
+                        try {
+                            CompletableFuture<InsertResponse> future =
+                              client.insert(blank.getTargetTable(), blank.getValues());
+                            complete(blank, future);
+                        }  catch (Exception e) {
+                            logger.error("Task id = {} Error while inserting data", id, e);
+                            queueCounter.decrementAndGet();
+                            handleUnsuccessfulResponse(e, blank);
+                        }
                     }
                 }
             } catch (Exception e) {
-                logger.error("Error while inserting data", e);
+                logger.error("Task id = {} Error while inserting data", id, e);
                 throw new RuntimeException(e);
             } finally {
                 logger.info("Task id = {} is finished", id);
             }
         }
 
-        private void send(ClickHouseRequestBlank requestBlank, CompletableFuture<Boolean> future) {
-            Request request = buildRequest(requestBlank);
-            logger.info("Ready to load data to {}, size = {}", requestBlank.getTargetTable(), requestBlank.getValues().size());
-            ListenableFuture<Response> whenResponse = asyncHttpClient.executeRequest(request);
-            Runnable callback = responseCallback(whenResponse, requestBlank, future);
-            whenResponse.addListener(callback, callbackService);
-        }
-
-        private Request buildRequest(ClickHouseRequestBlank requestBlank) {
-            String resultCSV = String.join(" , ", requestBlank.getValues());
-            String query = String.format("INSERT INTO %s VALUES %s", requestBlank.getTargetTable(), resultCSV);
-            String host = sinkSettings.getClickHouseClusterSettings().getRandomHostUrl();
-
-            BoundRequestBuilder builder = asyncHttpClient
-                    .preparePost(host)
-                    .setHeader(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=utf-8")
-                    .setBody(query);
-
-            if (sinkSettings.getClickHouseClusterSettings().isAuthorizationRequired()) {
-                builder.setHeader(HttpHeaderNames.AUTHORIZATION, "Basic " + sinkSettings.getClickHouseClusterSettings().getCredentials());
-            }
-
-            return builder.build();
-        }
-
-        private Runnable responseCallback(ListenableFuture<Response> whenResponse, ClickHouseRequestBlank requestBlank, CompletableFuture<Boolean> future) {
-            return () -> {
-                Response response = null;
-                try {
-                    response = whenResponse.get();
-
-                    if (response.getStatusCode() != HTTP_OK) {
-                        handleUnsuccessfulResponse(response, requestBlank, future);
-                    } else {
-                        logger.info("Successful send data to ClickHouse, batch size = {}, target table = {}, current attempt = {}",
-                                requestBlank.getValues().size(),
-                                requestBlank.getTargetTable(),
-                                requestBlank.getAttemptCounter());
-                        future.complete(true);
-                    }
-                } catch (Exception e) {
-                    logger.error("Error while executing callback, params = {}", sinkSettings, e);
-                    requestBlank.setException(e);
-                    try {
-                        handleUnsuccessfulResponse(response, requestBlank, future);
-                    } catch (Exception error) {
-                        logger.error("Error while handle unsuccessful response", error);
-                        future.completeExceptionally(error);
-                    }
-                } finally {
-                    queueCounter.decrementAndGet();
+        private void complete(ClickHouseRequestBlank<?> requestBlank, CompletableFuture<InsertResponse> future) {
+            future.whenComplete((response, throwable) -> {
+                if (throwable != null) {
+                    handleUnsuccessfulResponse(throwable, requestBlank);
+                } else {
+                    logger.info("Task id = {} Successful send data to ClickHouse, pending queue size = {}, batch size = {}, target table = {}, current attempt = {}, time = {}",
+                      id,
+                      queueCounter.get(),
+                      requestBlank.getValues().size(),
+                      requestBlank.getTargetTable(),
+                      requestBlank.getAttemptCounter(),
+                      System.currentTimeMillis() - requestBlank.getRequestTime());
                 }
-            };
+
+                queueCounter.decrementAndGet();
+            });
         }
 
-        private void handleUnsuccessfulResponse(Response response, ClickHouseRequestBlank requestBlank, CompletableFuture<Boolean> future) throws Exception {
+        private void handleUnsuccessfulResponse(Throwable throwable, ClickHouseRequestBlank<?> requestBlank) {
             int currentCounter = requestBlank.getAttemptCounter();
             if (currentCounter >= sinkSettings.getMaxRetries()) {
-                logger.warn("Failed to send data to ClickHouse, cause: limit of attempts is exceeded." +
-                        " ClickHouse response = {}. Ready to flush data on disk.", response, requestBlank.getException());
+                logger.warn("Task id = {} Failed to send data to ClickHouse, cause: limit of attempts is exceeded." +
+                        " ClickHouse response = {}. Ready to flush data on s3.", id, throwable.getMessage());
                 logFailedRecords(requestBlank);
-                future.completeExceptionally(new RuntimeException(String.format("Failed to send data to ClickHouse, cause: limit of attempts is exceeded." +
-                        " ClickHouse response: %s. Cause: %s", response != null ? response.getResponseBody() : null, requestBlank.getException())));
             } else {
                 requestBlank.incrementCounter();
-                logger.warn("Next attempt to send data to ClickHouse, table = {}, buffer size = {}, current attempt num = {}, max attempt num = {}, response = {}",
+                logger.warn("Task id = {} Next attempt to send data to ClickHouse, table = {}, batch size = {}, current attempt num = {}, max attempt num = {}, response = {}",
+                        id,
                         requestBlank.getTargetTable(),
                         requestBlank.getValues().size(),
                         requestBlank.getAttemptCounter(),
                         sinkSettings.getMaxRetries(),
-                        response);
-                queueCounter.incrementAndGet();
-                queue.put(requestBlank);
-                future.complete(false);
+                        throwable.getMessage());
+                boolean offered = queue.offer(requestBlank);
+                if (!offered) {
+                    logFailedRecords(requestBlank);
+                } else {
+                    queueCounter.incrementAndGet();
+                }
             }
         }
 
-        private void logFailedRecords(ClickHouseRequestBlank requestBlank) throws Exception {
-            String filePath = String.format("%s/%s_%s",
-                    sinkSettings.getFailedRecordsPath(),
-                    requestBlank.getTargetTable(),
-                    System.currentTimeMillis());
+        private void logFailedRecords(ClickHouseRequestBlank<?> requestBlank) {
+            String pathName = String.format("failed_records/%s", requestBlank.getTargetTable());
+            String batchKey = String.format("%s/%s_", pathName, System.currentTimeMillis());
 
-            try (PrintWriter writer = new PrintWriter(filePath)) {
-                List<String> records = requestBlank.getValues();
-                records.forEach(writer::println);
-                writer.flush();
+            try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+                List<?> records = requestBlank.getValues();
+                for (Object record: records) {
+                    try {
+                        outputStream.write(gson.toJson(record).getBytes(StandardCharsets.UTF_8));
+                    } catch (Exception e) {
+                        //
+                    }
+                }
+
+                PutObjectRequest putObjectRequest =
+                  PutObjectRequest.builder()
+                    .bucket(sinkSettings.getFailedRecordsPath())
+                    .key(batchKey + UUID.randomUUID())
+                    .contentLength((long) outputStream.size())
+                    .build();
+
+                try (ByteArrayInputStream inputStream =
+                       new ByteArrayInputStream(outputStream.toByteArray())) {
+                    s3Client.putObject(
+                      putObjectRequest, RequestBody.fromInputStream(inputStream, outputStream.size()));
+                    logger.info("Task id = {} Successful send data on s3, path = {}, batch size = {} ", id, pathName, requestBlank.getValues().size());
+                } catch (Exception e) {
+                    logger.error("Task id = {} Unknown exception while publishing data on s3 with path {} to S3", id, batchKey, e);
+                }
+            } catch (Exception e) {
+                logger.error("Task id = {} Unknown exception while publishing data on s3 with path {} to stream", id, batchKey, e);
             }
-            logger.info("Successful send data on disk, path = {}, size = {} ", filePath, requestBlank.getValues().size());
         }
 
         void setStopWorking() {

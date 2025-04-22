@@ -1,7 +1,21 @@
 package ru.ivi.opensource.flinkclickhousesink.applied;
 
-import java.util.concurrent.ExecutionException;
+public class Sink<T> implements AutoCloseable {
+    private final ClickHouseSinkBuffer<T> clickHouseSinkBuffer;
 
-public interface Sink extends AutoCloseable {
-    void put(String message) throws ExecutionException, InterruptedException;
+    public Sink(ClickHouseSinkBuffer<T> buffer) {
+        this.clickHouseSinkBuffer = buffer;
+    }
+
+
+    public void put(T message) {
+        clickHouseSinkBuffer.put(message);
+    }
+
+    @Override
+    public void close() {
+        if (clickHouseSinkBuffer != null) {
+            clickHouseSinkBuffer.close();
+        }
+    }
 }

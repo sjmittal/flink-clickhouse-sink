@@ -17,15 +17,15 @@ public class ClickHouseSink<T> extends RichSinkFunction<T> {
     private static final Object DUMMY_LOCK = new Object();
 
     private final Properties localProperties;
-    private final ClickHouseSinkConverter<T> clickHouseSinkConverter;
 
-    private volatile static transient ClickHouseSinkManager sinkManager;
-    private transient Sink sink;
+    private final Class<T> clazz;
 
-    public ClickHouseSink(Properties properties,
-                          ClickHouseSinkConverter<T> clickHouseSinkConverter) {
+    private volatile static ClickHouseSinkManager sinkManager;
+    private transient Sink<T> sink;
+
+    public ClickHouseSink(Properties properties, Class<T> clazz) {
         this.localProperties = properties;
-        this.clickHouseSinkConverter = clickHouseSinkConverter;
+        this.clazz = clazz;
     }
 
     @Override
@@ -43,20 +43,19 @@ public class ClickHouseSink<T> extends RichSinkFunction<T> {
             }
         }
 
-        sink = sinkManager.buildSink(localProperties);
+        sink = sinkManager.buildSink(localProperties, clazz);
     }
 
     /**
      * Add a record to sink
      *
-     * @param record  record, which will be converted to csv, using {@link ClickHouseSinkConverter}
+     * @param record  record
      * @param context ctx
      */
     @Override
     public void invoke(T record, Context context) {
         try {
-            String recordAsCSV = clickHouseSinkConverter.convert(record);
-            sink.put(recordAsCSV);
+            sink.put(record);
         } catch (Exception e) {
             logger.error("Error while sending data to ClickHouse, record = {}", record, e);
             throw new RuntimeException(e);
@@ -69,9 +68,9 @@ public class ClickHouseSink<T> extends RichSinkFunction<T> {
             sink.close();
         }
 
-        if (sinkManager != null && !sinkManager.isClosed()) {
+        if (sinkManager != null && sinkManager.isOpen()) {
             synchronized (DUMMY_LOCK) {
-                if (sinkManager != null && !sinkManager.isClosed()) {
+                if (sinkManager != null && sinkManager.isOpen()) {
                     sinkManager.close();
                     sinkManager = null;
                 }

@@ -4,24 +4,20 @@ import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.ivi.opensource.flinkclickhousesink.model.ClickHouseRequestBlank;
-import ru.ivi.opensource.flinkclickhousesink.util.FutureUtil;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
-public class ClickHouseSinkBuffer implements AutoCloseable {
+public class ClickHouseSinkBuffer<T> implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(ClickHouseSinkBuffer.class);
 
     private final ClickHouseWriter writer;
     private final String targetTable;
     private final int maxFlushBufferSize;
     private final long timeoutMillis;
-    private final List<String> localValues;
-    private final List<CompletableFuture<Boolean>> futures;
+    private final List<T> localValues;
+    private final Class<T> clazz;
 
     private volatile long lastAddTimeMillis = System.currentTimeMillis();
 
@@ -30,24 +26,23 @@ public class ClickHouseSinkBuffer implements AutoCloseable {
             long timeout,
             int maxBuffer,
             String table,
-            List<CompletableFuture<Boolean>> futures
+            Class<T> clazz
     ) {
         writer = chWriter;
         localValues = new ArrayList<>();
         timeoutMillis = timeout;
         maxFlushBufferSize = maxBuffer;
         targetTable = table;
+        this.clazz = clazz;
 
-        this.futures = futures;
-
-        logger.info("Instance ClickHouse Sink, target table = {}, buffer size = {}", this.targetTable, this.maxFlushBufferSize);
+        logger.info("Instance ClickHouse Sink class = {}, target table = {}, buffer size = {}", this.clazz, this.targetTable, this.maxFlushBufferSize);
     }
 
     String getTargetTable() {
         return targetTable;
     }
 
-    public void put(String recordAsCSV) {
+    public void put(T recordAsCSV) {
         tryAddToQueue();
         localValues.add(recordAsCSV);
     }
@@ -60,9 +55,9 @@ public class ClickHouseSinkBuffer implements AutoCloseable {
     }
 
     private void addToQueue() {
-        List<String> deepCopy = buildDeepCopy(localValues);
-        ClickHouseRequestBlank params = ClickHouseRequestBlank.Builder
-                .aBuilder()
+        List<T> deepCopy = buildDeepCopy(localValues);
+        ClickHouseRequestBlank<?> params = ClickHouseRequestBlank.Builder
+                .aBuilder(clazz)
                 .withValues(deepCopy)
                 .withTargetTable(targetTable)
                 .build();
@@ -86,16 +81,8 @@ public class ClickHouseSinkBuffer implements AutoCloseable {
         return current - lastAddTimeMillis > timeoutMillis;
     }
 
-    private static List<String> buildDeepCopy(List<String> original) {
-        return Collections.unmodifiableList(new ArrayList<>(original));
-    }
-
-    public void assertFuturesNotFailedYet() throws ExecutionException, InterruptedException {
-        CompletableFuture<Void> future = FutureUtil.allOf(futures);
-        //nonblocking operation
-        if (future.isCompletedExceptionally()) {
-            future.get();
-        }
+    private static <T> List<T> buildDeepCopy(List<T> original) {
+        return List.copyOf(original);
     }
 
     @Override
@@ -107,51 +94,49 @@ public class ClickHouseSinkBuffer implements AutoCloseable {
         logger.info("ClickHouse sink buffer shutdown complete.");
     }
 
-    public static final class Builder {
+    public static final class Builder<T> {
         private String targetTable;
         private int maxFlushBufferSize;
         private int timeoutSec;
-        private List<CompletableFuture<Boolean>> futures;
 
-        private Builder() {
+        private final Class<T> clazz;
+
+        private Builder(Class<T> clazz) {
+            this.clazz = clazz;
         }
 
-        public static Builder aClickHouseSinkBuffer() {
-            return new Builder();
+        public static <T> Builder<T> aClickHouseSinkBuffer(Class<T> clazz) {
+            return new Builder<>(clazz);
         }
 
-        public Builder withTargetTable(String targetTable) {
+        public Builder<T> withTargetTable(String targetTable) {
             this.targetTable = targetTable;
             return this;
         }
 
-        public Builder withMaxFlushBufferSize(int maxFlushBufferSize) {
+        public Builder<T> withMaxFlushBufferSize(int maxFlushBufferSize) {
             this.maxFlushBufferSize = maxFlushBufferSize;
             return this;
         }
 
-        public Builder withTimeoutSec(int timeoutSec) {
+        public Builder<T> withTimeoutSec(int timeoutSec) {
             this.timeoutSec = timeoutSec;
             return this;
         }
 
-        public Builder withFutures(List<CompletableFuture<Boolean>> futures) {
-            this.futures = futures;
-            return this;
-        }
 
-        public ClickHouseSinkBuffer build(ClickHouseWriter writer) {
+        public ClickHouseSinkBuffer<T> build(ClickHouseWriter writer) {
 
             Preconditions.checkNotNull(targetTable);
             Preconditions.checkArgument(maxFlushBufferSize > 0);
             Preconditions.checkArgument(timeoutSec > 0);
 
-            return new ClickHouseSinkBuffer(
+            return new ClickHouseSinkBuffer<>(
                     writer,
                     TimeUnit.SECONDS.toMillis(this.timeoutSec),
                     this.maxFlushBufferSize,
                     this.targetTable,
-                    this.futures
+                    clazz
             );
         }
     }
