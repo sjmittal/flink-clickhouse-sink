@@ -1,6 +1,7 @@
 package ru.ivi.opensource.flinkclickhousesink.applied;
 
 import com.clickhouse.client.api.Client;
+import com.clickhouse.client.api.ClientFaultCause;
 import com.clickhouse.client.api.internal.ServerSettings;
 import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
@@ -30,13 +31,17 @@ public class ClickHouseSinkManager implements AutoCloseable {
           .setUsername(sinkParams.getClickHouseClusterSettings().getUser())
           .setPassword(sinkParams.getClickHouseClusterSettings().getPassword())
           .setDefaultDatabase(sinkParams.getClickHouseClusterSettings().getDatabase())
+          .setMaxRetries(sinkParams.getMaxRetries())
+          .retryOnFailures(
+            ClientFaultCause.NoHttpResponse,
+            ClientFaultCause.ConnectTimeout,
+            ClientFaultCause.ConnectionRequestTimeout,
+            ClientFaultCause.SocketTimeout)
           .compressClientRequest(true)
-          .compressServerResponse(true)
-          .useHttpCompression(true)
+          .serverSetting(ServerSettings.ASYNC_INSERT, "1")
           .serverSetting("allow_experimental_json_type", "1")
           .serverSetting(ServerSettings.INPUT_FORMAT_BINARY_READ_JSON_AS_STRING, "1")
           .serverSetting(ServerSettings.OUTPUT_FORMAT_BINARY_WRITE_JSON_AS_STRING, "1")
-          .enableConnectionPool(true)
           .setConnectionRequestTimeout(60, ChronoUnit.SECONDS)
           .setConnectTimeout(60, ChronoUnit.SECONDS)
           .setSocketTimeout(30, ChronoUnit.SECONDS)

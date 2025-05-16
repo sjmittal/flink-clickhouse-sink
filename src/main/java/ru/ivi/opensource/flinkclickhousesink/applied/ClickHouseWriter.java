@@ -233,12 +233,11 @@ public class ClickHouseWriter implements AutoCloseable {
                 if (throwable != null) {
                     handleUnsuccessfulResponse(throwable, requestBlank);
                 } else {
-                    logger.info("Task id = {} Successful send data to ClickHouse, pending queue size = {}, batch size = {}, target table = {}, current attempt = {}, time = {}",
+                    logger.info("Task id = {} Successful send data to ClickHouse, pending queue size = {}, batch size = {}, target table = {}, time = {}",
                       id,
                       queueCounter.get(),
                       requestBlank.getValues().size(),
                       requestBlank.getTargetTable(),
-                      requestBlank.getAttemptCounter(),
                       System.currentTimeMillis() - requestBlank.getRequestTime());
                 }
 
@@ -247,27 +246,11 @@ public class ClickHouseWriter implements AutoCloseable {
         }
 
         private void handleUnsuccessfulResponse(Throwable throwable, ClickHouseRequestBlank<?> requestBlank) {
-            int currentCounter = requestBlank.getAttemptCounter();
-            if (currentCounter >= sinkSettings.getMaxRetries()) {
-                logger.warn("Task id = {} Failed to send data to ClickHouse, cause: limit of attempts is exceeded." +
-                        " ClickHouse response = {}. Ready to flush data on s3.", id, throwable.getMessage());
-                logFailedRecords(requestBlank);
-            } else {
-                requestBlank.incrementCounter();
-                logger.warn("Task id = {} Next attempt to send data to ClickHouse, table = {}, batch size = {}, current attempt num = {}, max attempt num = {}, response = {}",
-                        id,
-                        requestBlank.getTargetTable(),
-                        requestBlank.getValues().size(),
-                        requestBlank.getAttemptCounter(),
-                        sinkSettings.getMaxRetries(),
-                        throwable.getMessage());
-                boolean offered = queue.offer(requestBlank);
-                if (!offered) {
-                    logFailedRecords(requestBlank);
-                } else {
-                    queueCounter.incrementAndGet();
-                }
-            }
+            logger.warn(
+              "Task id = {} Failed to send data to ClickHouse, ClickHouse response = {}. Ready to flush data on s3.",
+              id,
+              throwable.getMessage());
+            logFailedRecords(requestBlank);
         }
 
         private void logFailedRecords(ClickHouseRequestBlank<?> requestBlank) {

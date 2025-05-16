@@ -5,13 +5,11 @@ import java.util.List;
 public class ClickHouseRequestBlank<T> {
     private final List<T> values;
     private final String targetTable;
-    private int attemptCounter;
     private long requestTime;
 
     public ClickHouseRequestBlank(List<T> values, String targetTable) {
         this.values = values;
         this.targetTable = targetTable;
-        this.attemptCounter = 0;
         this.requestTime = System.currentTimeMillis();
     }
 
@@ -19,13 +17,6 @@ public class ClickHouseRequestBlank<T> {
         return values;
     }
 
-    public void incrementCounter() {
-        this.attemptCounter++;
-    }
-
-    public int getAttemptCounter() {
-        return attemptCounter;
-    }
 
     public String getTargetTable() {
         return targetTable;
@@ -70,7 +61,6 @@ public class ClickHouseRequestBlank<T> {
         return "ClickHouseRequestBlank{" +
                 "values=" + values +
                 ", targetTable='" + targetTable  +
-                ", attemptCounter=" + attemptCounter +
                 ", requestTime=" + requestTime +
                 '}';
     }
