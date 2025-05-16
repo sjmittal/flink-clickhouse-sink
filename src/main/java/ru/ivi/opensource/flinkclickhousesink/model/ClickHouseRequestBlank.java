@@ -2,12 +2,14 @@ package ru.ivi.opensource.flinkclickhousesink.model;
 
 import java.util.List;
 
-public class ClickHouseRequestBlank<T> {
-    private final List<T> values;
+public class ClickHouseRequestBlank {
+    private final List<String> values;
     private final String targetTable;
-    private long requestTime;
+    private int attemptCounter;
 
-    public ClickHouseRequestBlank(List<T> values, String targetTable) {
+    private Exception exception;
+
+    public ClickHouseRequestBlank(List<String> values, String targetTable, Exception exception) {
         this.values = values;
         this.targetTable = targetTable;
         this.requestTime = System.currentTimeMillis();
