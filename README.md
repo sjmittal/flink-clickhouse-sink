@@ -14,8 +14,8 @@ High-performance library for loading data to ClickHouse.
 ##### Version map
 | flink  | flink-clickhouse-sink | 
 |:------:|:---------------------:| 
-| 1.19.* |         1.4.7         |
-| 1.20.* |         1.4.7         |
+| 1.19.* |         1.4.8         |
+| 1.20.* |         1.4.8         |
 
 ### Install
 
@@ -25,7 +25,7 @@ High-performance library for loading data to ClickHouse.
 <dependency>
   <groupId>ru.ivi.opensource</groupId>
   <artifactId>flink-clickhouse-sink</artifactId>
-  <version>1.4.7</version>
+  <version>1.4.8</version>
 </dependency>
 ```
 
