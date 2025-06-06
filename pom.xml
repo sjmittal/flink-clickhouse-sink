@@ -12,7 +12,7 @@
 
     <groupId>io.github.sjmittal</groupId>
     <artifactId>flink-clickhouse-sink</artifactId>
-    <version>1.4.9</version>
+    <version>1.4.10</version>
     <packaging>jar</packaging>
 
     <name>Flink ClickHouse sink</name>
@@ -123,6 +123,11 @@
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>s3</artifactId>
+            <version>2.29.52</version>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>url-connection-client</artifactId>
             <version>2.29.52</version>
         </dependency>
 

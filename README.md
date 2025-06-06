@@ -14,8 +14,8 @@ High-performance library for loading data to ClickHouse.
 ##### Version map
 | flink  | flink-clickhouse-sink | 
 |:------:|:---------------------:| 
-| 1.19.* |         1.4.8         |
-| 1.20.* |         1.4.8         |
+| 1.19.* |        1.4.8+         |
+| 1.20.* |        1.4.8+         |
 
 ### Install
 
@@ -25,7 +25,7 @@ High-performance library for loading data to ClickHouse.
 <dependency>
   <groupId>ru.ivi.opensource</groupId>
   <artifactId>flink-clickhouse-sink</artifactId>
-  <version>1.4.8</version>
+  <version>1.4.10</version>
 </dependency>
 ```
 
@@ -43,6 +43,8 @@ common and for each sink in you operators chain.
  `clickhouse.sink.timeout-sec` - timeout for loading data,
  
  `clickhouse.sink.retries` - max number of retries,
+
+ `clickhouse.sink.failed-records-endpoint`- s3 compatible endpoint for failed records,
  
  `clickhouse.sink.failed-records-path`- s3 bucket for failed records,
 
@@ -87,5 +89,5 @@ environment.getConfig().setGlobalJobParameters(parameters);
 
 
 ## Roadmap
-- [ ] handle "failed-records" for other providers
+- [ ] handle "failed-records" for non s3 compatible providers
 - [ ] add test cases

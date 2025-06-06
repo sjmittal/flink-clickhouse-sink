@@ -13,12 +13,15 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.InstanceProfileCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
@@ -50,7 +53,17 @@ public class ClickHouseWriter implements AutoCloseable {
         this.commonQueue = new LinkedBlockingQueue<>(sinkParams.getQueueMaxCapacity());
         this.client = client;
 
-        if (sinkParams.getFailedRecordsRegion() != null) {
+        if (sinkParams.getFailedRecordsEndpoint() != null) {
+            s3Client = S3Client.builder()
+              .endpointOverride(URI.create(sinkParams.getFailedRecordsEndpoint()))
+              .credentialsProvider(StaticCredentialsProvider.create(
+                AwsBasicCredentials.create(
+                  sinkParams.getFailedRecordsAccessKey(), sinkParams.getFailedRecordsSecretKey())))
+              .region(Region.of(sinkParams.getFailedRecordsRegion()))
+              .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
+              .httpClient(UrlConnectionHttpClient.create())
+              .build();
+        } else if (sinkParams.getFailedRecordsRegion() != null) {
             s3Client = S3Client
               .builder()
               .region(Region.of(sinkParams.getFailedRecordsRegion()))

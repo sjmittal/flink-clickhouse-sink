@@ -11,6 +11,7 @@ public final class ClickHouseSinkConst {
     public static final String QUEUE_MAX_CAPACITY = "clickhouse.sink.queue-max-capacity";
     public static final String TIMEOUT_SEC = "clickhouse.sink.timeout-sec";
     public static final String NUM_RETRIES = "clickhouse.sink.retries";
+    public static final String FAILED_RECORDS_ENDPOINT = "clickhouse.sink.failed-records-endpoint";
     public static final String FAILED_RECORDS_PATH = "clickhouse.sink.failed-records-path";
     public static final String FAILED_RECORDS_REGION = "clickhouse.sink.failed-records-region";
     public static final String FAILED_RECORDS_ACCESS_KEY = "clickhouse.sink.failed-records-access-key";

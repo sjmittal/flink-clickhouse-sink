@@ -5,6 +5,7 @@ import com.google.common.base.Preconditions;
 import java.util.Map;
 
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.FAILED_RECORDS_ACCESS_KEY;
+import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.FAILED_RECORDS_ENDPOINT;
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.FAILED_RECORDS_PATH;
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.FAILED_RECORDS_REGION;
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.FAILED_RECORDS_SECRET_KEY;
@@ -16,6 +17,7 @@ import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.TI
 public class ClickHouseSinkCommonParams {
 
     private final ClickHouseClusterSettings clickHouseClusterSettings;
+    private final String failedRecordsEndpoint;
     private final String failedRecordsPath;
     private final String failedRecordsRegion;
     private final String failedRecordsAccessKey;
@@ -31,12 +33,16 @@ public class ClickHouseSinkCommonParams {
         this.queueMaxCapacity = Integer.parseInt(params.get(QUEUE_MAX_CAPACITY));
         this.maxRetries = Integer.parseInt(params.get(NUM_RETRIES));
         this.timeout = Integer.parseInt(params.get(TIMEOUT_SEC));
+        this.failedRecordsEndpoint = params.get(FAILED_RECORDS_ENDPOINT);
         this.failedRecordsPath = params.get(FAILED_RECORDS_PATH);
         this.failedRecordsRegion = params.get(FAILED_RECORDS_REGION);
         this.failedRecordsAccessKey = params.get(FAILED_RECORDS_ACCESS_KEY);
         this.failedRecordsSecretKey = params.get(FAILED_RECORDS_SECRET_KEY);
 
         Preconditions.checkNotNull(failedRecordsPath);
+        if (failedRecordsEndpoint != null) {
+            Preconditions.checkNotNull(failedRecordsRegion);
+        }
         if (failedRecordsRegion != null) {
             Preconditions.checkNotNull(failedRecordsAccessKey);
             Preconditions.checkNotNull(failedRecordsSecretKey);
@@ -67,6 +73,10 @@ public class ClickHouseSinkCommonParams {
         return maxRetries;
     }
 
+    public String getFailedRecordsEndpoint() {
+        return failedRecordsEndpoint;
+    }
+
     public String getFailedRecordsPath() {
         return failedRecordsPath;
     }
@@ -87,6 +97,7 @@ public class ClickHouseSinkCommonParams {
     public String toString() {
         return "ClickHouseSinkCommonParams{" +
                 "clickHouseClusterSettings=" + clickHouseClusterSettings +
+                ", failedRecordsEndpoint='" + failedRecordsEndpoint + '\'' +
                 ", failedRecordsPath='" + failedRecordsPath + '\'' +
                 ", failedRecordsRegion='" + failedRecordsRegion + '\'' +
                 ", failedRecordsAccessKey='" + failedRecordsAccessKey + '\'' +
