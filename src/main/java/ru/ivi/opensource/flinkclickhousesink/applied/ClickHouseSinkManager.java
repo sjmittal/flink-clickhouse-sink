@@ -38,7 +38,7 @@ public class ClickHouseSinkManager implements AutoCloseable {
             ClientFaultCause.ConnectionRequestTimeout,
             ClientFaultCause.SocketTimeout)
           .compressClientRequest(true)
-          .serverSetting(ServerSettings.ASYNC_INSERT, "1")
+          .serverSetting(ServerSettings.ASYNC_INSERT, sinkParams.getAsyncInsert() ? "1" : "0")
           .serverSetting("allow_experimental_json_type", "1")
           .serverSetting(ServerSettings.INPUT_FORMAT_BINARY_READ_JSON_AS_STRING, "1")
           .serverSetting(ServerSettings.OUTPUT_FORMAT_BINARY_WRITE_JSON_AS_STRING, "1")

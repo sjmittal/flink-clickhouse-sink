@@ -79,6 +79,7 @@ globalParameters.put(ClickHouseSinkConst.TIMEOUT_SEC, ...);
 globalParameters.put(ClickHouseSinkConst.FAILED_RECORDS_PATH, ...);
 globalParameters.put(ClickHouseSinkConst.NUM_WRITERS, ...);
 globalParameters.put(ClickHouseSinkConst.NUM_RETRIES, ...);
+globalParameters.put(ClickHouseSinkConst.ASYNC_INSERT, ...);
 globalParameters.put(ClickHouseSinkConst.QUEUE_MAX_CAPACITY, ...);
 
 // set global paramaters
