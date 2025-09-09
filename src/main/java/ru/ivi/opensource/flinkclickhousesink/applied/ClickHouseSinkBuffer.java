@@ -62,7 +62,9 @@ public class ClickHouseSinkBuffer<T> implements AutoCloseable {
                 .withTargetTable(targetTable)
                 .build();
 
-        logger.debug("Build blank with params: buffer size = {}, target table  = {}", params.getValues().size(), params.getTargetTable());
+        logger.info(
+          "Build with params: target table  = {}, buffer size = {}, lastAddTime = {}",
+          params.getTargetTable(), params.getValues().size(), lastAddTimeMillis/1000);
         writer.put(params);
 
         localValues.clear();
