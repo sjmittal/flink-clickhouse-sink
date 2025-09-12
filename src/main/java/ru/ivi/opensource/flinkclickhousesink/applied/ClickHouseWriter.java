@@ -2,6 +2,8 @@ package ru.ivi.opensource.flinkclickhousesink.applied;
 
 import com.clickhouse.client.api.Client;
 import com.clickhouse.client.api.insert.InsertResponse;
+import com.clickhouse.client.api.metrics.Metric;
+import com.clickhouse.client.api.metrics.OperationMetrics;
 import com.google.common.collect.Lists;
 import com.google.gson.Gson;
 import org.slf4j.Logger;
@@ -23,7 +25,10 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -33,6 +38,8 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+
+import static com.clickhouse.client.api.metrics.ServerMetrics.ELAPSED_TIME;
 
 public class ClickHouseWriter implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(ClickHouseWriter.class);
@@ -213,22 +220,27 @@ public class ClickHouseWriter implements AutoCloseable {
 
                 logger.info("Start writer task, id = {}", id);
                 while (isWorking || queue.size() > 0) {
-                    ClickHouseRequestBlank<?> blank = queue.poll(300, TimeUnit.MILLISECONDS);
-                    if (blank != null) {
+                    Map<String, List<Object>> blanks = new HashMap<>();
+                    List<ClickHouseRequestBlank<?>> removedBlanks = new ArrayList<>();
+                    queue.drainTo(removedBlanks);
+                    for(ClickHouseRequestBlank<?> blank: removedBlanks) {
+                        blanks.computeIfAbsent(blank.getTargetTable(), k -> new ArrayList<>()).addAll(blank.getValues());
+                        queueCounter.decrementAndGet();
+                    }
+                    for (Map.Entry<String, List<Object>> blank: blanks.entrySet()) {
                         logger.info(
                           "Task id = {} Ready to load data to {}, batch size = {}, pending queue size = {}",
                           id,
-                          blank.getTargetTable(),
-                          blank.getValues().size(),
+                          blank.getKey(),
+                          blank.getValue().size(),
                           queueCounter.get());
-                        blank.setRequestTime(System.currentTimeMillis());
                         try {
+                            long requestStartTime = System.currentTimeMillis();
                             CompletableFuture<InsertResponse> future =
-                              client.insert(blank.getTargetTable(), blank.getValues());
-                            complete(blank, future);
+                              client.insert(blank.getKey(), blank.getValue());
+                            complete(requestStartTime, blank, future);
                         }  catch (Exception e) {
                             logger.error("Task id = {} Error while inserting data", id, e);
-                            queueCounter.decrementAndGet();
                             handleUnsuccessfulResponse(e, blank);
                         }
                     }
@@ -241,24 +253,26 @@ public class ClickHouseWriter implements AutoCloseable {
             }
         }
 
-        private void complete(ClickHouseRequestBlank<?> requestBlank, CompletableFuture<InsertResponse> future) {
+        private void complete(long requestStartTime, Map.Entry<String, List<Object>> requestBlank, CompletableFuture<InsertResponse> future) {
             future.whenComplete((response, throwable) -> {
                 if (throwable != null) {
                     handleUnsuccessfulResponse(throwable, requestBlank);
                 } else {
+                    OperationMetrics metrics = response.getMetrics();
+                    Metric elapsedTime = metrics.getMetric(ELAPSED_TIME);
                     logger.info("Task id = {} Successful send data to ClickHouse, pending queue size = {}, batch size = {}, target table = {}, time = {}",
                       id,
                       queueCounter.get(),
-                      requestBlank.getValues().size(),
-                      requestBlank.getTargetTable(),
-                      System.currentTimeMillis() - requestBlank.getRequestTime());
+                      requestBlank.getValue().size(),
+                      requestBlank.getKey(),
+                      elapsedTime != null && elapsedTime.getLong() > 0 ?
+                        TimeUnit.MILLISECONDS.convert(elapsedTime.getLong(), TimeUnit.NANOSECONDS) :
+                        System.currentTimeMillis() - requestStartTime);
                 }
-
-                queueCounter.decrementAndGet();
             });
         }
 
-        private void handleUnsuccessfulResponse(Throwable throwable, ClickHouseRequestBlank<?> requestBlank) {
+        private void handleUnsuccessfulResponse(Throwable throwable, Map.Entry<String, List<Object>> requestBlank) {
             logger.warn(
               "Task id = {} Failed to send data to ClickHouse, ClickHouse response = {}. Ready to flush data on s3.",
               id,
@@ -266,12 +280,12 @@ public class ClickHouseWriter implements AutoCloseable {
             logFailedRecords(requestBlank);
         }
 
-        private void logFailedRecords(ClickHouseRequestBlank<?> requestBlank) {
-            String pathName = String.format("failed_records/%s", requestBlank.getTargetTable());
+        private void logFailedRecords(Map.Entry<String, List<Object>> requestBlank) {
+            String pathName = String.format("failed_records/%s", requestBlank.getKey());
             String batchKey = String.format("%s/%s_", pathName, System.currentTimeMillis());
 
             try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-                List<?> records = requestBlank.getValues();
+                List<?> records = requestBlank.getValue();
                 for (Object record: records) {
                     try {
                         outputStream.write(gson.toJson(record).getBytes(StandardCharsets.UTF_8));
@@ -291,7 +305,7 @@ public class ClickHouseWriter implements AutoCloseable {
                        new ByteArrayInputStream(outputStream.toByteArray())) {
                     s3Client.putObject(
                       putObjectRequest, RequestBody.fromInputStream(inputStream, outputStream.size()));
-                    logger.info("Task id = {} Successful send data on s3, path = {}, batch size = {} ", id, pathName, requestBlank.getValues().size());
+                    logger.info("Task id = {} Successful send data on s3, path = {}, batch size = {} ", id, pathName, requestBlank.getValue().size());
                 } catch (Exception e) {
                     logger.error("Task id = {} Unknown exception while publishing data on s3 with path {} to S3", id, batchKey, e);
                 }

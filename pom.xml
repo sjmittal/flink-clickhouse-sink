@@ -12,7 +12,7 @@
 
     <groupId>io.github.sjmittal</groupId>
     <artifactId>flink-clickhouse-sink</artifactId>
-    <version>1.4.12</version>
+    <version>1.5.0</version>
     <packaging>jar</packaging>
 
     <name>Flink ClickHouse sink</name>
