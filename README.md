@@ -23,9 +23,9 @@ High-performance library for loading data to ClickHouse.
 
 ```xml
 <dependency>
-  <groupId>ru.ivi.opensource</groupId>
-  <artifactId>flink-clickhouse-sink</artifactId>
-  <version>1.4.10</version>
+    <groupId>io.github.sjmittal</groupId>
+    <artifactId>flink-clickhouse-sink</artifactId>
+    <version>1.4.12</version>
 </dependency>
 ```
 
