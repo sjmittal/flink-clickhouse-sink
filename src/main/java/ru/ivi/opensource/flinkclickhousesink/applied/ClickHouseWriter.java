@@ -215,39 +215,59 @@ public class ClickHouseWriter implements AutoCloseable {
 
         @Override
         public void run() {
+            logger.info("Start writer task, id = {}", id);
             try {
                 isWorking = true;
-
-                logger.info("Start writer task, id = {}", id);
-                while (isWorking || queue.size() > 0) {
-                    Map<String, List<Object>> blanks = new HashMap<>();
-                    List<ClickHouseRequestBlank<?>> removedBlanks = new ArrayList<>();
-                    queue.drainTo(removedBlanks);
-                    for(ClickHouseRequestBlank<?> blank: removedBlanks) {
-                        blanks.computeIfAbsent(blank.getTargetTable(), k -> new ArrayList<>()).addAll(blank.getValues());
-                        queueCounter.decrementAndGet();
-                    }
-                    for (Map.Entry<String, List<Object>> blank: blanks.entrySet()) {
-                        logger.info(
-                          "Task id = {} Ready to load data to {}, batch size = {}, pending queue size = {}",
-                          id,
-                          blank.getKey(),
-                          blank.getValue().size(),
-                          queueCounter.get());
-                        try {
-                            long requestStartTime = System.currentTimeMillis();
-                            CompletableFuture<InsertResponse> future =
-                              client.insert(blank.getKey(), blank.getValue());
-                            complete(requestStartTime, blank, future);
-                        }  catch (Exception e) {
-                            logger.error("Task id = {} Error while inserting data", id, e);
-                            handleUnsuccessfulResponse(e, blank);
+                while (true) {
+                    try {
+                        if (!isWorking && queue.isEmpty()) {
+                            logger.info("Writer task {} exiting gracefully", id);
+                            break;
                         }
+                        Map<String, List<Object>> blanks = new HashMap<>();
+                        List<ClickHouseRequestBlank<?>> removedBlanks = new ArrayList<>();
+                        ClickHouseRequestBlank<?> first = queue.poll(1, TimeUnit.SECONDS);
+                        if (first != null) {
+                            removedBlanks.add(first);
+                            queue.drainTo(removedBlanks);
+                        } else {
+                            continue;
+                        }
+                        for (ClickHouseRequestBlank<?> blank : removedBlanks) {
+                            if (blank == null) {
+                                logger.warn("Null blank encountered");
+                                continue;
+                            }
+                            List<?> values = blank.getValues();
+                            if (values == null || values.isEmpty()) {
+                                logger.warn("Empty values for table {}", blank.getTargetTable());
+                                continue;
+                            }
+                            blanks.computeIfAbsent(blank.getTargetTable(), k -> new ArrayList<>()).addAll(values);
+                            queueCounter.decrementAndGet();
+                        }
+                        for (Map.Entry<String, List<Object>> entry : blanks.entrySet()) {
+                            try {
+                                logger.info(
+                                  "Task id = {} Ready to load data to {}, batch size = {}, pending queue size = {}",
+                                  id,
+                                  entry.getKey(),
+                                  entry.getValue().size(),
+                                  queueCounter.get()
+                                );
+                                long requestStartTime = System.currentTimeMillis();
+                                CompletableFuture<InsertResponse> future =
+                                  client.insert(entry.getKey(), entry.getValue());
+                                complete(requestStartTime, entry, future);
+                            } catch (Exception e) {
+                                logger.error("Task id = {} Error while inserting data", id, e);
+                                handleUnsuccessfulResponse(e, entry);
+                            }
+                        }
+                    } catch (Throwable t) {
+                        logger.error("Writer task {} recovered from error", id, t);
                     }
                 }
-            } catch (Exception e) {
-                logger.error("Task id = {} Error while inserting data", id, e);
-                throw new RuntimeException(e);
             } finally {
                 logger.info("Task id = {} is finished", id);
             }
