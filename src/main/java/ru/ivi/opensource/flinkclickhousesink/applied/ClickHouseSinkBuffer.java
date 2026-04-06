@@ -14,6 +14,7 @@ public class ClickHouseSinkBuffer<T> implements AutoCloseable {
 
     private final ClickHouseWriter writer;
     private final String targetTable;
+    private final int clientIndex;
     private final int maxFlushBufferSize;
     private final long timeoutMillis;
     private final List<T> localValues;
@@ -26,6 +27,7 @@ public class ClickHouseSinkBuffer<T> implements AutoCloseable {
             long timeout,
             int maxBuffer,
             String table,
+            int clientIndex,
             Class<T> clazz
     ) {
         writer = chWriter;
@@ -33,6 +35,7 @@ public class ClickHouseSinkBuffer<T> implements AutoCloseable {
         timeoutMillis = timeout;
         maxFlushBufferSize = maxBuffer;
         targetTable = table;
+        this.clientIndex = clientIndex;
         this.clazz = clazz;
 
         logger.info("Instance ClickHouse Sink class = {}, target table = {}, buffer size = {}", this.clazz, this.targetTable, this.maxFlushBufferSize);
@@ -60,6 +63,7 @@ public class ClickHouseSinkBuffer<T> implements AutoCloseable {
                 .aBuilder(clazz)
                 .withValues(deepCopy)
                 .withTargetTable(targetTable)
+                .withClientIndex(clientIndex)
                 .build();
 
         logger.info(
@@ -99,6 +103,7 @@ public class ClickHouseSinkBuffer<T> implements AutoCloseable {
     public static final class Builder<T> {
         private String targetTable;
         private int maxFlushBufferSize;
+        private int clientIndex;
         private int timeoutSec;
 
         private final Class<T> clazz;
@@ -121,6 +126,11 @@ public class ClickHouseSinkBuffer<T> implements AutoCloseable {
             return this;
         }
 
+        public Builder<T> withClientIndex(int clientIndex) {
+            this.clientIndex = clientIndex;
+            return this;
+        }
+
         public Builder<T> withTimeoutSec(int timeoutSec) {
             this.timeoutSec = timeoutSec;
             return this;
@@ -138,6 +148,7 @@ public class ClickHouseSinkBuffer<T> implements AutoCloseable {
                     TimeUnit.SECONDS.toMillis(this.timeoutSec),
                     this.maxFlushBufferSize,
                     this.targetTable,
+                    this.clientIndex,
                     clazz
             );
         }

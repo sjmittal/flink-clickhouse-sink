@@ -11,7 +11,7 @@ import java.util.Properties;
 
 public final class ConfigUtil {
 
-    public static final String HOST_DELIMITER = ",";
+    public static final String DELIMITER = ",";
 
     private ConfigUtil() {
 
@@ -35,10 +35,10 @@ public final class ConfigUtil {
     }
 
     public static String buildStringFromList(List<String> list) {
-        return String.join(HOST_DELIMITER, list);
+        return String.join(DELIMITER, list);
     }
 
     public static List<String> buildListFromString(String string) {
-        return Arrays.asList(string.split(" "));
+        return Arrays.asList(string.split(DELIMITER));
     }
 }

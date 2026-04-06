@@ -45,7 +45,7 @@ public class ClickHouseWriter implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(ClickHouseWriter.class);
     private static final Gson gson = new Gson();
 
-    private final transient Client client;
+    private final transient List<Client> clients;
     private final transient S3Client s3Client;
 
     private final BlockingQueue<ClickHouseRequestBlank<?>> commonQueue;
@@ -55,10 +55,10 @@ public class ClickHouseWriter implements AutoCloseable {
     private ExecutorService service;
     private List<WriterTask> tasks;
 
-    public ClickHouseWriter(ClickHouseSinkCommonParams sinkParams, Client client) {
+    public ClickHouseWriter(ClickHouseSinkCommonParams sinkParams, List<Client> clients) {
         this.sinkParams = sinkParams;
         this.commonQueue = new LinkedBlockingQueue<>(sinkParams.getQueueMaxCapacity());
-        this.client = client;
+        this.clients = clients;
 
         if (sinkParams.getFailedRecordsEndpoint() != null) {
             s3Client = S3Client.builder()
@@ -105,11 +105,10 @@ public class ClickHouseWriter implements AutoCloseable {
 
         int numWriters = sinkParams.getNumWriters();
         tasks = Lists.newArrayListWithCapacity(numWriters);
-        for (int i = 0; i < numWriters; i++) {
-            WriterTask task = new WriterTask(i, client, s3Client, commonQueue, sinkParams, unprocessedRequestsCounter);
-            tasks.add(task);
-            service.submit(task);
-        }
+        WriterTask task = new WriterTask(clients, s3Client, commonQueue, sinkParams, unprocessedRequestsCounter);
+        tasks.add(task);
+        service.submit(task);
+
     }
 
     public void put(ClickHouseRequestBlank<?> params) {
@@ -182,7 +181,7 @@ public class ClickHouseWriter implements AutoCloseable {
         } finally {
             ThreadUtil.shutdownExecutorService(service);
             s3Client.close();
-            client.close();
+            clients.forEach(Client::close);
             logger.info("{} shutdown complete.", ClickHouseWriter.class.getSimpleName());
         }
     }
@@ -193,38 +192,35 @@ public class ClickHouseWriter implements AutoCloseable {
         private final BlockingQueue<ClickHouseRequestBlank<?>> queue;
         private final AtomicLong queueCounter;
         private final ClickHouseSinkCommonParams sinkSettings;
-        private final Client client;
+        private final List<Client> clients;
         private final S3Client s3Client;
-        private final int id;
-
         private volatile boolean isWorking;
 
-        WriterTask(int id,
-                   Client client,
+        WriterTask(List<Client> clients,
                    S3Client s3Client,
                    BlockingQueue<ClickHouseRequestBlank<?>> queue,
                    ClickHouseSinkCommonParams settings,
                    AtomicLong queueCounter) {
-            this.id = id;
             this.sinkSettings = settings;
             this.queue = queue;
-            this.client = client;
+            this.clients = clients;
             this.s3Client = s3Client;
             this.queueCounter = queueCounter;
         }
 
         @Override
         public void run() {
-            logger.info("Start writer task, id = {}", id);
+            logger.info("Start writer task");
             try {
                 isWorking = true;
                 while (true) {
                     try {
                         if (!isWorking && queue.isEmpty()) {
-                            logger.info("Writer task {} exiting gracefully", id);
+                            logger.info("Writer task exiting gracefully");
                             break;
                         }
                         Map<String, List<Object>> blanks = new HashMap<>();
+                        Map<String, Integer> clientIndexes = new HashMap<>();
                         List<ClickHouseRequestBlank<?>> removedBlanks = new ArrayList<>();
                         ClickHouseRequestBlank<?> first = queue.poll(1, TimeUnit.SECONDS);
                         if (first != null) {
@@ -244,32 +240,33 @@ public class ClickHouseWriter implements AutoCloseable {
                                 continue;
                             }
                             blanks.computeIfAbsent(blank.getTargetTable(), k -> new ArrayList<>()).addAll(values);
+                            clientIndexes.computeIfAbsent(blank.getTargetTable(), k -> blank.getClientIndex());
                             queueCounter.decrementAndGet();
                         }
                         for (Map.Entry<String, List<Object>> entry : blanks.entrySet()) {
                             try {
                                 logger.info(
-                                  "Task id = {} Ready to load data to {}, batch size = {}, pending queue size = {}",
-                                  id,
+                                  "Task Ready to load data to {}, batch size = {}, pending queue size = {}",
                                   entry.getKey(),
                                   entry.getValue().size(),
                                   queueCounter.get()
                                 );
                                 long requestStartTime = System.currentTimeMillis();
+                                Client client = clients.get(clientIndexes.get(entry.getKey()));
                                 CompletableFuture<InsertResponse> future =
                                   client.insert(entry.getKey(), entry.getValue());
                                 complete(requestStartTime, entry, future);
                             } catch (Exception e) {
-                                logger.error("Task id = {} Error while inserting data", id, e);
+                                logger.error("Task Error while inserting data", e);
                                 handleUnsuccessfulResponse(e, entry);
                             }
                         }
                     } catch (Throwable t) {
-                        logger.error("Writer task {} recovered from error", id, t);
+                        logger.error("Writer task recovered from error", t);
                     }
                 }
             } finally {
-                logger.info("Task id = {} is finished", id);
+                logger.info("Task is finished");
             }
         }
 
@@ -280,8 +277,7 @@ public class ClickHouseWriter implements AutoCloseable {
                 } else {
                     OperationMetrics metrics = response.getMetrics();
                     Metric elapsedTime = metrics.getMetric(ELAPSED_TIME);
-                    logger.info("Task id = {} Successful send data to ClickHouse, pending queue size = {}, batch size = {}, target table = {}, time = {}",
-                      id,
+                    logger.info("Task Successful send data to ClickHouse, pending queue size = {}, batch size = {}, target table = {}, time = {}",
                       queueCounter.get(),
                       requestBlank.getValue().size(),
                       requestBlank.getKey(),
@@ -294,8 +290,7 @@ public class ClickHouseWriter implements AutoCloseable {
 
         private void handleUnsuccessfulResponse(Throwable throwable, Map.Entry<String, List<Object>> requestBlank) {
             logger.warn(
-              "Task id = {} Failed to send data to ClickHouse, ClickHouse response = {}. Ready to flush data on s3.",
-              id,
+              "Task Failed to send data to ClickHouse, ClickHouse response = {}. Ready to flush data on s3.",
               throwable.getMessage());
             logFailedRecords(requestBlank);
         }
@@ -325,12 +320,12 @@ public class ClickHouseWriter implements AutoCloseable {
                        new ByteArrayInputStream(outputStream.toByteArray())) {
                     s3Client.putObject(
                       putObjectRequest, RequestBody.fromInputStream(inputStream, outputStream.size()));
-                    logger.info("Task id = {} Successful send data on s3, path = {}, batch size = {} ", id, pathName, requestBlank.getValue().size());
+                    logger.info("Task Successful send data on s3, path = {}, batch size = {} ", pathName, requestBlank.getValue().size());
                 } catch (Exception e) {
-                    logger.error("Task id = {} Unknown exception while publishing data on s3 with path {} to S3", id, batchKey, e);
+                    logger.error("Task Unknown exception while publishing data on s3 with path {} to S3", batchKey, e);
                 }
             } catch (Exception e) {
-                logger.error("Task id = {} Unknown exception while publishing data on s3 with path {} to stream", id, batchKey, e);
+                logger.error("Task Unknown exception while publishing data on s3 with path {} to stream", batchKey, e);
             }
         }
 

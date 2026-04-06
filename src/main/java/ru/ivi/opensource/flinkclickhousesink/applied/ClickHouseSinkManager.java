@@ -9,10 +9,13 @@ import org.slf4j.LoggerFactory;
 import ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkCommonParams;
 
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.MAX_BUFFER_SIZE;
+import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.TARGET_CLIENT_INDEX;
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.TARGET_TABLE_NAME;
 
 public class ClickHouseSinkManager implements AutoCloseable {
@@ -21,32 +24,40 @@ public class ClickHouseSinkManager implements AutoCloseable {
     private final ClickHouseWriter clickHouseWriter;
     private final ClickHouseSinkScheduledCheckerAndCleaner clickHouseSinkScheduledCheckerAndCleaner;
     private final ClickHouseSinkCommonParams sinkParams;
-    private final Client client;
+    private final List<Client> clients;
     private volatile boolean isClosed = false;
 
     public ClickHouseSinkManager(Map<String, String> globalParams) {
+        clients = new ArrayList<>();
         sinkParams = new ClickHouseSinkCommonParams(globalParams);
-        client = new Client.Builder()
-          .addEndpoint(sinkParams.getClickHouseClusterSettings().getRandomHostUrl())
-          .setUsername(sinkParams.getClickHouseClusterSettings().getUser())
-          .setPassword(sinkParams.getClickHouseClusterSettings().getPassword())
-          .setDefaultDatabase(sinkParams.getClickHouseClusterSettings().getDatabase())
-          .setMaxRetries(sinkParams.getMaxRetries())
-          .retryOnFailures(
-            ClientFaultCause.NoHttpResponse,
-            ClientFaultCause.ConnectTimeout,
-            ClientFaultCause.ConnectionRequestTimeout,
-            ClientFaultCause.SocketTimeout)
-          .compressClientRequest(true)
-          .serverSetting(ServerSettings.ASYNC_INSERT, sinkParams.getAsyncInsert() ? "1" : "0")
-          .serverSetting("allow_experimental_json_type", "1")
-          .serverSetting(ServerSettings.INPUT_FORMAT_BINARY_READ_JSON_AS_STRING, "1")
-          .serverSetting(ServerSettings.OUTPUT_FORMAT_BINARY_WRITE_JSON_AS_STRING, "1")
-          .setConnectionRequestTimeout(60, ChronoUnit.SECONDS)
-          .setConnectTimeout(60, ChronoUnit.SECONDS)
-          .setSocketTimeout(30, ChronoUnit.SECONDS)
-          .build();
-        clickHouseWriter = new ClickHouseWriter(sinkParams, client);
+
+        Preconditions.checkArgument(
+          sinkParams.getNumWriters() == sinkParams.getClickHouseClusterSettings().getHostsWithPorts().size());
+
+        for (int i = 0; i < sinkParams.getNumWriters(); i++) {
+            Client client = new Client.Builder()
+              .addEndpoint(sinkParams.getClickHouseClusterSettings().getHostUrl(i))
+              .setUsername(sinkParams.getClickHouseClusterSettings().getUser(i))
+              .setPassword(sinkParams.getClickHouseClusterSettings().getPassword(i))
+              .setDefaultDatabase(sinkParams.getClickHouseClusterSettings().getDatabase(i))
+              .setMaxRetries(sinkParams.getMaxRetries())
+              .retryOnFailures(
+                ClientFaultCause.NoHttpResponse,
+                ClientFaultCause.ConnectTimeout,
+                ClientFaultCause.ConnectionRequestTimeout,
+                ClientFaultCause.SocketTimeout)
+              .compressClientRequest(true)
+              .serverSetting(ServerSettings.ASYNC_INSERT, sinkParams.getAsyncInsert() ? "1" : "0")
+              .serverSetting("allow_experimental_json_type", "1")
+              .serverSetting(ServerSettings.INPUT_FORMAT_BINARY_READ_JSON_AS_STRING, "1")
+              .serverSetting(ServerSettings.OUTPUT_FORMAT_BINARY_WRITE_JSON_AS_STRING, "1")
+              .setConnectionRequestTimeout(60, ChronoUnit.SECONDS)
+              .setConnectTimeout(60, ChronoUnit.SECONDS)
+              .setSocketTimeout(30, ChronoUnit.SECONDS)
+              .build();
+            clients.add(client);
+        }
+        clickHouseWriter = new ClickHouseWriter(sinkParams, clients);
         clickHouseSinkScheduledCheckerAndCleaner = new ClickHouseSinkScheduledCheckerAndCleaner(sinkParams);
         logger.info("Build sink writer's manager. params = {}", sinkParams);
     }
@@ -54,11 +65,12 @@ public class ClickHouseSinkManager implements AutoCloseable {
     public <T> Sink<T> buildSink(Properties localProperties, Class<T> clazz) {
         String targetTable = localProperties.getProperty(TARGET_TABLE_NAME);
         int maxFlushBufferSize = Integer.parseInt(localProperties.getProperty(MAX_BUFFER_SIZE));
+        int index = Integer.parseInt(localProperties.getProperty(TARGET_CLIENT_INDEX));
 
-        return buildSink(targetTable, maxFlushBufferSize, clazz);
+        return buildSink(targetTable, maxFlushBufferSize, index, clazz);
     }
 
-    public <T> Sink<T> buildSink(String targetTable, int maxBufferSize, Class<T> clazz) {
+    public <T> Sink<T> buildSink(String targetTable, int maxBufferSize, int index, Class<T> clazz) {
         Preconditions.checkNotNull(clickHouseSinkScheduledCheckerAndCleaner);
         Preconditions.checkNotNull(clickHouseWriter);
 
@@ -66,8 +78,10 @@ public class ClickHouseSinkManager implements AutoCloseable {
                 .aClickHouseSinkBuffer(clazz)
                 .withTargetTable(targetTable)
                 .withMaxFlushBufferSize(maxBufferSize)
+                .withClientIndex(index)
                 .withTimeoutSec(sinkParams.getTimeout())
                 .build(clickHouseWriter);
+        Client client = clients.get(index);
         client.register(clazz, client.getTableSchema(targetTable));
 
         logger.info("Registered sink for table = {}, class = {}", targetTable, clazz);

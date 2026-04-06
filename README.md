@@ -14,8 +14,8 @@ High-performance library for loading data to ClickHouse.
 ##### Version map
 | flink  | flink-clickhouse-sink | 
 |:------:|:---------------------:| 
-| 1.19.* |        1.4.8+         |
-| 1.20.* |        1.4.8+         |
+| 1.19.* |        1.6.0+         |
+| 1.20.* |        1.6.0+         |
 
 ### Install
 
@@ -25,7 +25,7 @@ High-performance library for loading data to ClickHouse.
 <dependency>
   <groupId>ru.ivi.opensource</groupId>
   <artifactId>flink-clickhouse-sink</artifactId>
-  <version>1.4.10</version>
+  <version>1.6.0</version>
 </dependency>
 ```
 
@@ -36,7 +36,7 @@ common and for each sink in you operators chain.
 
 **The common part** (use like global):
 
- `clickhouse.sink.num-writers` - number of writers, which build and send requests, 
+ `clickhouse.sink.num-writers` - number of clickhouse clients, which build and send requests to different instances, 
  
  `clickhouse.sink.queue-max-capacity` - max capacity (batches) of blank's queue,
  
@@ -60,6 +60,8 @@ common and for each sink in you operators chain.
  
  `clickhouse.sink.max-buffer-size`- buffer size.
 
+ `clickhouse.sink.client-index`- target ClickHouse client index this to write to
+
 ### In code
 
 #### Configuration: global parameters
@@ -71,8 +73,8 @@ Map<String, String> globalParameters = new HashMap<>();
 
 // ClickHouse cluster properties
 globalParameters.put(ClickHouseClusterSettings.CLICKHOUSE_HOSTS, ...);
-globalParameters.put(ClickHouseClusterSettings.CLICKHOUSE_USER, ...);
-globalParameters.put(ClickHouseClusterSettings.CLICKHOUSE_PASSWORD, ...);
+globalParameters.put(ClickHouseClusterSettings.CLICKHOUSE_USERS, ...);
+globalParameters.put(ClickHouseClusterSettings.CLICKHOUSE_PASSWORDS, ...);
 
 // sink common
 globalParameters.put(ClickHouseSinkConst.TIMEOUT_SEC, ...);

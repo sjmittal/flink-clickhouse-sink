@@ -4,6 +4,7 @@ import com.google.common.base.Preconditions;
 import org.apache.commons.lang3.StringUtils;
 import ru.ivi.opensource.flinkclickhousesink.util.ConfigUtil;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
@@ -11,21 +12,20 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
+import static ru.ivi.opensource.flinkclickhousesink.util.ConfigUtil.buildListFromString;
+
 public class ClickHouseClusterSettings {
 
     public static final String CLICKHOUSE_HOSTS = "clickhouse.access.hosts";
-    public static final String CLICKHOUSE_USER = "clickhouse.access.user";
-    public static final String CLICKHOUSE_PASSWORD = "clickhouse.access.password";
-    public static final String CLICKHOUSE_DB = "clickhouse.access.db";
+    public static final String CLICKHOUSE_USERS = "clickhouse.access.users";
+    public static final String CLICKHOUSE_PASSWORDS = "clickhouse.access.passwords";
+    public static final String CLICKHOUSE_DBS = "clickhouse.access.dbs";
 
     private final List<String> hostsWithPorts;
-    private final String user;
-    private final String password;
-    private final String database;
-    private final String credentials;
-    private final boolean authorizationRequired;
-
-    private int currentHostId = 0;
+    private final List<String> users;
+    private final List<String> passwords;
+    private final List<String> databases;
+    private final List<String> credentials;
 
     public ClickHouseClusterSettings(Map<String, String> parameters) {
         Preconditions.checkNotNull(parameters);
@@ -33,45 +33,26 @@ public class ClickHouseClusterSettings {
         String hostsString = parameters.get(CLICKHOUSE_HOSTS);
         Preconditions.checkNotNull(hostsString);
 
-        hostsWithPorts = buildHostsAndPort(hostsString);
+        hostsWithPorts = buildListFromString(hostsString);
         Preconditions.checkArgument(hostsWithPorts.size() > 0);
 
-        String usr = parameters.get(CLICKHOUSE_USER);
-        String pass = parameters.get(CLICKHOUSE_PASSWORD);
+        users = buildListFromString(parameters.get(CLICKHOUSE_USERS));
+        Preconditions.checkArgument(hostsWithPorts.size() == users.size());
 
-        if (StringUtils.isNotEmpty(usr) && StringUtils.isNotEmpty(pass)) {
-            user = parameters.get(CLICKHOUSE_USER);
-            password = parameters.get(CLICKHOUSE_PASSWORD);
+        passwords = buildListFromString(parameters.get(CLICKHOUSE_PASSWORDS));
+        Preconditions.checkArgument(hostsWithPorts.size() == passwords.size());
 
-            credentials = buildCredentials(user, password);
+        databases = buildListFromString(parameters.get(CLICKHOUSE_DBS));
+        Preconditions.checkArgument(hostsWithPorts.size() == databases.size());
 
-            database = parameters.getOrDefault(CLICKHOUSE_DB, "default");
-            authorizationRequired = true;
-        } else {
-            // avoid NPE
-            credentials = "";
-            password = "";
-            user = "";
-            database = "default";
-            authorizationRequired = false;
+        credentials = new ArrayList<>();
+        int i = 0;
+        for (String user: users) {
+            credentials.add(buildCredentials(user, passwords.get(i)));
+            i++;
         }
     }
 
-    private static List<String> buildHostsAndPort(String hostsString) {
-        String hosts = hostsString.replace(" ", "");
-        return Arrays.stream(hosts
-                        .split(ConfigUtil.HOST_DELIMITER))
-                .map(ClickHouseClusterSettings::checkHttpAndAdd)
-                .collect(Collectors.toList());
-    }
-
-    private static String checkHttpAndAdd(String host) {
-        String newHost = host.replace(" ", "");
-        if (!newHost.contains("http")) {
-            return "http://" + newHost;
-        }
-        return newHost;
-    }
 
     private static String buildCredentials(String user, String password) {
         Base64.Encoder x = Base64.getEncoder();
@@ -79,52 +60,37 @@ public class ClickHouseClusterSettings {
         return new String(x.encode(credentials.getBytes()));
     }
 
-    public String getRandomHostUrl() {
-        currentHostId = ThreadLocalRandom.current().nextInt(hostsWithPorts.size());
-        return hostsWithPorts.get(currentHostId);
-    }
-
-    public String getNextHost() {
-        if (currentHostId >= hostsWithPorts.size() - 1) {
-            currentHostId = 0;
-        } else {
-            currentHostId += 1;
-        }
-        return hostsWithPorts.get(currentHostId);
+    public String getHostUrl(int i) {
+        return hostsWithPorts.get(i);
     }
 
     public List<String> getHostsWithPorts() {
         return hostsWithPorts;
     }
 
-    public String getUser() {
-        return user;
+    public String getUser(int i) {
+        return users.get(i);
     }
 
-    public String getPassword() {
-        return password;
+    public String getPassword(int i) {
+        return passwords.get(i);
     }
 
-    public String getDatabase() {
-        return database;
+    public String getDatabase(int i) {
+        return databases.get(i);
     }
 
-    public String getCredentials() {
-        return credentials;
+    public String getCredentials(int i) {
+        return credentials.get(i);
     }
 
-    public boolean isAuthorizationRequired() {
-        return authorizationRequired;
-    }
 
     @Override
     public String toString() {
         return "ClickHouseClusterSettings{" +
                 "hostsWithPorts=" + hostsWithPorts +
-                ", database='" + database + '\'' +
-                ", credentials='" + credentials + '\'' +
-                ", authorizationRequired=" + authorizationRequired +
-                ", currentHostId=" + currentHostId +
+                ", databases=" + databases +
+                ", credentials=" + credentials  +
                 '}';
     }
 }

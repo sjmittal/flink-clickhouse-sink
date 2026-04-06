@@ -5,10 +5,12 @@ import java.util.List;
 public class ClickHouseRequestBlank<T> {
     private final List<T> values;
     private final String targetTable;
+    private final int clientIndex;
 
-    public ClickHouseRequestBlank(List<T> values, String targetTable) {
+    public ClickHouseRequestBlank(List<T> values, String targetTable, int clientIndex) {
         this.values = values;
         this.targetTable = targetTable;
+        this.clientIndex = clientIndex;
     }
 
     public List<T> getValues() {
@@ -19,9 +21,15 @@ public class ClickHouseRequestBlank<T> {
         return targetTable;
     }
 
+    public int getClientIndex() {
+        return clientIndex;
+    }
+
     public static final class Builder<T> {
         private List<T> values;
         private String targetTable;
+
+        private int clientIndex;
 
         private Builder(Class<T> clazz) {
         }
@@ -40,8 +48,13 @@ public class ClickHouseRequestBlank<T> {
             return this;
         }
 
+        public Builder<T> withClientIndex(int clientIndex) {
+            this.clientIndex = clientIndex;
+            return this;
+        }
+
         public ClickHouseRequestBlank<T> build() {
-            return new ClickHouseRequestBlank<>(values, targetTable);
+            return new ClickHouseRequestBlank<>(values, targetTable, clientIndex);
         }
     }
 

@@ -6,6 +6,7 @@ public final class ClickHouseSinkConst {
 
     public static final String TARGET_TABLE_NAME = "clickhouse.sink.target-table";
     public static final String MAX_BUFFER_SIZE = "clickhouse.sink.max-buffer-size";
+    public static final String TARGET_CLIENT_INDEX = "clickhouse.sink.client-index";
 
     public static final String NUM_WRITERS = "clickhouse.sink.num-writers";
     public static final String QUEUE_MAX_CAPACITY = "clickhouse.sink.queue-max-capacity";
