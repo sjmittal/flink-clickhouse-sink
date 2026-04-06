@@ -53,7 +53,7 @@ public class ClickHouseWriter implements AutoCloseable {
     private final ClickHouseSinkCommonParams sinkParams;
 
     private ExecutorService service;
-    private List<WriterTask> tasks;
+    private WriterTask task;
 
     public ClickHouseWriter(ClickHouseSinkCommonParams sinkParams, List<Client> clients) {
         this.sinkParams = sinkParams;
@@ -101,14 +101,10 @@ public class ClickHouseWriter implements AutoCloseable {
         logger.info("Building components");
 
         ThreadFactory threadFactory = ThreadUtil.threadFactory("clickhouse-writer");
-        service = Executors.newFixedThreadPool(sinkParams.getNumWriters(), threadFactory);
+        service = Executors.newFixedThreadPool(1, threadFactory);
 
-        int numWriters = sinkParams.getNumWriters();
-        tasks = Lists.newArrayListWithCapacity(numWriters);
-        WriterTask task = new WriterTask(clients, s3Client, commonQueue, sinkParams, unprocessedRequestsCounter);
-        tasks.add(task);
+        task = new WriterTask(clients, s3Client, commonQueue, sinkParams, unprocessedRequestsCounter);
         service.submit(task);
-
     }
 
     public void put(ClickHouseRequestBlank<?> params) {
@@ -161,16 +157,14 @@ public class ClickHouseWriter implements AutoCloseable {
                 Thread.sleep(sinkParams.getTimeout() * 1000L);
             }
         } finally {
-            stopWriters();
+            stopWriter();
         }
     }
 
-    private void stopWriters() {
-        logger.info("Stopping writers.");
-        if (tasks != null && tasks.size() > 0) {
-            tasks.forEach(WriterTask::setStopWorking);
-        }
-        logger.info("Writers stopped.");
+    private void stopWriter() {
+        logger.info("Stopping writer.");
+        task.setStopWorking();
+        logger.info("Writer stopped.");
     }
 
     @Override

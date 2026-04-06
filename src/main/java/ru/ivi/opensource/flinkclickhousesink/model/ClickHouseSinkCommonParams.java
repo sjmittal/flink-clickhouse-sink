@@ -2,9 +2,11 @@ package ru.ivi.opensource.flinkclickhousesink.model;
 
 import com.google.common.base.Preconditions;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
-import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.ASYNC_INSERT;
+import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.ASYNC_INSERTS;
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.FAILED_RECORDS_ACCESS_KEY;
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.FAILED_RECORDS_ENDPOINT;
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.FAILED_RECORDS_PATH;
@@ -14,6 +16,7 @@ import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.NU
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.NUM_WRITERS;
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.QUEUE_MAX_CAPACITY;
 import static ru.ivi.opensource.flinkclickhousesink.model.ClickHouseSinkConst.TIMEOUT_SEC;
+import static ru.ivi.opensource.flinkclickhousesink.util.ConfigUtil.buildListFromString;
 
 public class ClickHouseSinkCommonParams {
 
@@ -26,7 +29,7 @@ public class ClickHouseSinkCommonParams {
     private final int numWriters;
     private final int queueMaxCapacity;
     private final int timeout;
-    private final boolean asyncInsert;
+    private final List<String> asyncInserts;
     private final int maxRetries;
 
     public ClickHouseSinkCommonParams(Map<String, String> params) {
@@ -35,7 +38,15 @@ public class ClickHouseSinkCommonParams {
         this.queueMaxCapacity = Integer.parseInt(params.get(QUEUE_MAX_CAPACITY));
         this.maxRetries = Integer.parseInt(params.get(NUM_RETRIES));
         this.timeout = Integer.parseInt(params.get(TIMEOUT_SEC));
-        this.asyncInsert = "1".equals(params.get(ASYNC_INSERT));
+
+        String asyncInserts = params.get(ASYNC_INSERTS);
+        if (asyncInserts != null) {
+            this.asyncInserts = buildListFromString(asyncInserts);
+            Preconditions.checkArgument(this.asyncInserts.size() == this.numWriters);
+        } else {
+            this.asyncInserts = Collections.nCopies(this.numWriters, "0");
+        }
+
         this.failedRecordsEndpoint = params.get(FAILED_RECORDS_ENDPOINT);
         this.failedRecordsPath = params.get(FAILED_RECORDS_PATH);
         this.failedRecordsRegion = params.get(FAILED_RECORDS_REGION);
@@ -72,8 +83,8 @@ public class ClickHouseSinkCommonParams {
         return timeout;
     }
 
-    public boolean getAsyncInsert() {
-        return asyncInsert;
+    public String getAsyncInsert(int i) {
+        return asyncInserts.get(i);
     }
 
     public int getMaxRetries() {
