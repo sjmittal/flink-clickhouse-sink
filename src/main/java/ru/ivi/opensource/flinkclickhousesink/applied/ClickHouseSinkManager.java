@@ -42,6 +42,7 @@ public class ClickHouseSinkManager implements AutoCloseable {
               .setDefaultDatabase(sinkParams.getClickHouseClusterSettings().getDatabase(i))
               .setMaxRetries(sinkParams.getMaxRetries())
               .retryOnFailures(
+                ClientFaultCause.ServerRetryable,
                 ClientFaultCause.NoHttpResponse,
                 ClientFaultCause.ConnectTimeout,
                 ClientFaultCause.ConnectionRequestTimeout,

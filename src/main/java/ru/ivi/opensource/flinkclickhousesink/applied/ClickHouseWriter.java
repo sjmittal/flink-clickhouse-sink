@@ -4,7 +4,6 @@ import com.clickhouse.client.api.Client;
 import com.clickhouse.client.api.insert.InsertResponse;
 import com.clickhouse.client.api.metrics.Metric;
 import com.clickhouse.client.api.metrics.OperationMetrics;
-import com.google.common.collect.Lists;
 import com.google.gson.Gson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -252,7 +251,7 @@ public class ClickHouseWriter implements AutoCloseable {
                                 complete(requestStartTime, entry, future);
                             } catch (Exception e) {
                                 logger.error("Task Error while inserting data", e);
-                                handleUnsuccessfulResponse(e, entry);
+                                logFailedRecords(entry);
                             }
                         }
                     } catch (Throwable t) {
@@ -267,7 +266,8 @@ public class ClickHouseWriter implements AutoCloseable {
         private void complete(long requestStartTime, Map.Entry<String, List<Object>> requestBlank, CompletableFuture<InsertResponse> future) {
             future.whenComplete((response, throwable) -> {
                 if (throwable != null) {
-                    handleUnsuccessfulResponse(throwable, requestBlank);
+                    logger.error("Task Complete Error while inserting data", throwable);
+                    logFailedRecords(requestBlank);
                 } else {
                     OperationMetrics metrics = response.getMetrics();
                     Metric elapsedTime = metrics.getMetric(ELAPSED_TIME);
@@ -280,13 +280,6 @@ public class ClickHouseWriter implements AutoCloseable {
                         System.currentTimeMillis() - requestStartTime);
                 }
             });
-        }
-
-        private void handleUnsuccessfulResponse(Throwable throwable, Map.Entry<String, List<Object>> requestBlank) {
-            logger.warn(
-              "Task Failed to send data to ClickHouse, ClickHouse response = {}. Ready to flush data on s3.",
-              throwable.getMessage());
-            logFailedRecords(requestBlank);
         }
 
         private void logFailedRecords(Map.Entry<String, List<Object>> requestBlank) {
