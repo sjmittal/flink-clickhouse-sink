@@ -25,6 +25,7 @@ import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,7 +48,7 @@ public class ClickHouseWriter implements AutoCloseable {
     private final transient List<Client> clients;
     private final transient S3Client s3Client;
 
-    private final BlockingQueue<ClickHouseRequestBlank<?>> commonQueue;
+    private final List<BlockingQueue<ClickHouseRequestBlank<?>>> commonQueues;
     private final AtomicLong unprocessedRequestsCounter = new AtomicLong();
     private final ClickHouseSinkCommonParams sinkParams;
 
@@ -56,7 +57,10 @@ public class ClickHouseWriter implements AutoCloseable {
 
     public ClickHouseWriter(ClickHouseSinkCommonParams sinkParams, List<Client> clients) {
         this.sinkParams = sinkParams;
-        this.commonQueue = new LinkedBlockingQueue<>(sinkParams.getQueueMaxCapacity());
+        this.commonQueues = new ArrayList<>(sinkParams.getNumWriters());
+        for (int i = 0; i < sinkParams.getNumWriters(); i++) {
+            this.commonQueues.add(new LinkedBlockingQueue<>(sinkParams.getQueueMaxCapacity()));
+        }
         this.clients = clients;
 
         if (sinkParams.getFailedRecordsEndpoint() != null) {
@@ -102,11 +106,12 @@ public class ClickHouseWriter implements AutoCloseable {
         ThreadFactory threadFactory = ThreadUtil.threadFactory("clickhouse-writer");
         service = Executors.newFixedThreadPool(1, threadFactory);
 
-        task = new WriterTask(clients, s3Client, commonQueue, sinkParams, unprocessedRequestsCounter);
+        task = new WriterTask(clients, s3Client, commonQueues, sinkParams, unprocessedRequestsCounter);
         service.submit(task);
     }
 
     public void put(ClickHouseRequestBlank<?> params) {
+        BlockingQueue<ClickHouseRequestBlank<?>> commonQueue = commonQueues.get(params.getClientIndex());
         boolean offered = commonQueue.offer(params);
         if (!offered) {
             logFailedRecords(params);
@@ -151,13 +156,22 @@ public class ClickHouseWriter implements AutoCloseable {
 
     private void waitUntilAllRequestsDone() throws InterruptedException {
         try {
-            if (unprocessedRequestsCounter.get() > 0 || commonQueue.size() > 0) {
-                logger.info("request queue size: {}, pending requests size: {}", commonQueue.size(), unprocessedRequestsCounter.get());
+            int size = size();
+            if (unprocessedRequestsCounter.get() > 0 || size > 0) {
+                logger.info("request queue size: {}, pending requests size: {}", size, unprocessedRequestsCounter.get());
                 Thread.sleep(sinkParams.getTimeout() * 1000L);
             }
         } finally {
             stopWriter();
         }
+    }
+
+    private int size() {
+        int size = 0;
+        for (BlockingQueue<ClickHouseRequestBlank<?>> queue: commonQueues) {
+            size += queue.size();
+        }
+        return size;
     }
 
     private void stopWriter() {
@@ -182,7 +196,7 @@ public class ClickHouseWriter implements AutoCloseable {
     static class WriterTask implements Runnable {
         private static final Logger logger = LoggerFactory.getLogger(WriterTask.class);
 
-        private final BlockingQueue<ClickHouseRequestBlank<?>> queue;
+        private final List<BlockingQueue<ClickHouseRequestBlank<?>>> queues;
         private final AtomicLong queueCounter;
         private final ClickHouseSinkCommonParams sinkSettings;
         private final List<Client> clients;
@@ -191,11 +205,11 @@ public class ClickHouseWriter implements AutoCloseable {
 
         WriterTask(List<Client> clients,
                    S3Client s3Client,
-                   BlockingQueue<ClickHouseRequestBlank<?>> queue,
+                   List<BlockingQueue<ClickHouseRequestBlank<?>>> queues,
                    ClickHouseSinkCommonParams settings,
                    AtomicLong queueCounter) {
             this.sinkSettings = settings;
-            this.queue = queue;
+            this.queues = queues;
             this.clients = clients;
             this.s3Client = s3Client;
             this.queueCounter = queueCounter;
@@ -208,33 +222,35 @@ public class ClickHouseWriter implements AutoCloseable {
                 isWorking = true;
                 while (true) {
                     try {
-                        if (!isWorking && queue.isEmpty()) {
+                        if (!isWorking && isEmpty()) {
                             logger.info("Writer task exiting gracefully");
                             break;
                         }
                         Map<String, List<Object>> blanks = new HashMap<>();
                         Map<String, Integer> clientIndexes = new HashMap<>();
-                        List<ClickHouseRequestBlank<?>> removedBlanks = new ArrayList<>();
-                        ClickHouseRequestBlank<?> first = queue.poll(1, TimeUnit.SECONDS);
-                        if (first != null) {
-                            removedBlanks.add(first);
-                            queue.drainTo(removedBlanks);
-                        } else {
-                            continue;
-                        }
-                        for (ClickHouseRequestBlank<?> blank : removedBlanks) {
-                            if (blank == null) {
-                                logger.warn("Null blank encountered");
+                        for (BlockingQueue<ClickHouseRequestBlank<?>> queue: queues) {
+                            List<ClickHouseRequestBlank<?>> removedBlanks = new ArrayList<>();
+                            ClickHouseRequestBlank<?> first = queue.poll(1, TimeUnit.SECONDS);
+                            if (first != null) {
+                                removedBlanks.add(first);
+                                queue.drainTo(removedBlanks);
+                            } else {
                                 continue;
                             }
-                            List<?> values = blank.getValues();
-                            if (values == null || values.isEmpty()) {
-                                logger.warn("Empty values for table {}", blank.getTargetTable());
-                                continue;
+                            for (ClickHouseRequestBlank<?> blank : removedBlanks) {
+                                if (blank == null) {
+                                    logger.warn("Null blank encountered");
+                                    continue;
+                                }
+                                List<?> values = blank.getValues();
+                                if (values == null || values.isEmpty()) {
+                                    logger.warn("Empty values for table {}", blank.getTargetTable());
+                                    continue;
+                                }
+                                blanks.computeIfAbsent(blank.getTargetTable(), k -> new ArrayList<>()).addAll(values);
+                                clientIndexes.computeIfAbsent(blank.getTargetTable(), k -> blank.getClientIndex());
+                                queueCounter.decrementAndGet();
                             }
-                            blanks.computeIfAbsent(blank.getTargetTable(), k -> new ArrayList<>()).addAll(values);
-                            clientIndexes.computeIfAbsent(blank.getTargetTable(), k -> blank.getClientIndex());
-                            queueCounter.decrementAndGet();
                         }
                         for (Map.Entry<String, List<Object>> entry : blanks.entrySet()) {
                             try {
@@ -314,6 +330,10 @@ public class ClickHouseWriter implements AutoCloseable {
             } catch (Exception e) {
                 logger.error("Task Unknown exception while publishing data on s3 with path {} to stream", batchKey, e);
             }
+        }
+
+        private boolean isEmpty() {
+            return queues.stream().allMatch(Collection::isEmpty);
         }
 
         void setStopWorking() {
