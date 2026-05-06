@@ -6,11 +6,13 @@ public class ClickHouseRequestBlank<T> {
     private final List<T> values;
     private final String targetTable;
     private final int clientIndex;
+    private final int maxFlushBufferSize;
 
-    public ClickHouseRequestBlank(List<T> values, String targetTable, int clientIndex) {
+    public ClickHouseRequestBlank(List<T> values, String targetTable, int clientIndex, int maxFlushBufferSize) {
         this.values = values;
         this.targetTable = targetTable;
         this.clientIndex = clientIndex;
+        this.maxFlushBufferSize = maxFlushBufferSize;
     }
 
     public List<T> getValues() {
@@ -25,11 +27,17 @@ public class ClickHouseRequestBlank<T> {
         return clientIndex;
     }
 
+    public int getMaxFlushBufferSize() {
+        return maxFlushBufferSize;
+    }
+
     public static final class Builder<T> {
         private List<T> values;
         private String targetTable;
 
         private int clientIndex;
+
+        private int maxFlushBufferSize;
 
         private Builder(Class<T> clazz) {
         }
@@ -53,8 +61,13 @@ public class ClickHouseRequestBlank<T> {
             return this;
         }
 
+        public Builder<T> withMaxFlushBufferSize(int maxFlushBufferSize) {
+            this.maxFlushBufferSize = maxFlushBufferSize;
+            return this;
+        }
+
         public ClickHouseRequestBlank<T> build() {
-            return new ClickHouseRequestBlank<>(values, targetTable, clientIndex);
+            return new ClickHouseRequestBlank<>(values, targetTable, clientIndex, maxFlushBufferSize);
         }
     }
 

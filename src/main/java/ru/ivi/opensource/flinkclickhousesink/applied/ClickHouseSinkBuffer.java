@@ -64,6 +64,7 @@ public class ClickHouseSinkBuffer<T> implements AutoCloseable {
                 .withValues(deepCopy)
                 .withTargetTable(targetTable)
                 .withClientIndex(clientIndex)
+                .withMaxFlushBufferSize(maxFlushBufferSize)
                 .build();
 
         logger.info(

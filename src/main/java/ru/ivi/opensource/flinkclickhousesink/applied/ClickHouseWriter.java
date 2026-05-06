@@ -4,6 +4,7 @@ import com.clickhouse.client.api.Client;
 import com.clickhouse.client.api.insert.InsertResponse;
 import com.clickhouse.client.api.metrics.Metric;
 import com.clickhouse.client.api.metrics.OperationMetrics;
+import com.google.common.collect.Lists;
 import com.google.gson.Gson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,7 +54,7 @@ public class ClickHouseWriter implements AutoCloseable {
     private final ClickHouseSinkCommonParams sinkParams;
 
     private ExecutorService service;
-    private WriterTask task;
+    private List<WriterTask> tasks;
 
     public ClickHouseWriter(ClickHouseSinkCommonParams sinkParams, List<Client> clients) {
         this.sinkParams = sinkParams;
@@ -104,10 +105,15 @@ public class ClickHouseWriter implements AutoCloseable {
         logger.info("Building components");
 
         ThreadFactory threadFactory = ThreadUtil.threadFactory("clickhouse-writer");
-        service = Executors.newFixedThreadPool(1, threadFactory);
+        service = Executors.newFixedThreadPool(sinkParams.getNumWriters(), threadFactory);
 
-        task = new WriterTask(clients, s3Client, commonQueues, sinkParams, unprocessedRequestsCounter);
-        service.submit(task);
+        int numWriters = sinkParams.getNumWriters();
+        tasks = Lists.newArrayListWithCapacity(numWriters);
+        for (int i = 0; i < numWriters; i++) {
+            WriterTask task = new WriterTask(i, clients.get(i), s3Client, commonQueues.get(i), sinkParams, unprocessedRequestsCounter);
+            tasks.add(task);
+            service.submit(task);
+        }
     }
 
     public void put(ClickHouseRequestBlank<?> params) {
@@ -162,7 +168,7 @@ public class ClickHouseWriter implements AutoCloseable {
                 Thread.sleep(sinkParams.getTimeout() * 1000L);
             }
         } finally {
-            stopWriter();
+            stopWriters();
         }
     }
 
@@ -174,10 +180,12 @@ public class ClickHouseWriter implements AutoCloseable {
         return size;
     }
 
-    private void stopWriter() {
-        logger.info("Stopping writer.");
-        task.setStopWorking();
-        logger.info("Writer stopped.");
+    private void stopWriters() {
+        logger.info("Stopping writers.");
+        if (tasks != null && tasks.size() > 0) {
+            tasks.forEach(WriterTask::setStopWorking);
+        }
+        logger.info("Writers stopped.");
     }
 
     @Override
@@ -195,105 +203,128 @@ public class ClickHouseWriter implements AutoCloseable {
 
     static class WriterTask implements Runnable {
         private static final Logger logger = LoggerFactory.getLogger(WriterTask.class);
+        private static final int MAX_ELEMENTS = 4;
 
-        private final List<BlockingQueue<ClickHouseRequestBlank<?>>> queues;
+        private final BlockingQueue<ClickHouseRequestBlank<?>> queue;
         private final AtomicLong queueCounter;
         private final ClickHouseSinkCommonParams sinkSettings;
-        private final List<Client> clients;
+        private final Client client;
         private final S3Client s3Client;
+        private final int id;
+
         private volatile boolean isWorking;
 
-        WriterTask(List<Client> clients,
+        WriterTask(int id,
+                   Client client,
                    S3Client s3Client,
-                   List<BlockingQueue<ClickHouseRequestBlank<?>>> queues,
+                   BlockingQueue<ClickHouseRequestBlank<?>> queue,
                    ClickHouseSinkCommonParams settings,
                    AtomicLong queueCounter) {
+            this.id = id;
             this.sinkSettings = settings;
-            this.queues = queues;
-            this.clients = clients;
+            this.queue = queue;
+            this.client = client;
             this.s3Client = s3Client;
             this.queueCounter = queueCounter;
         }
 
         @Override
         public void run() {
-            logger.info("Start writer task");
+            logger.info("Start writer task, id = {}", id);
             try {
                 isWorking = true;
                 while (true) {
                     try {
-                        if (!isWorking && isEmpty()) {
-                            logger.info("Writer task exiting gracefully");
+                        if (!isWorking && queue.isEmpty()) {
+                            logger.info("Writer task exiting gracefully, id = {}", id);
                             break;
                         }
                         Map<String, List<Object>> blanks = new HashMap<>();
-                        Map<String, Integer> clientIndexes = new HashMap<>();
-                        for (BlockingQueue<ClickHouseRequestBlank<?>> queue: queues) {
-                            List<ClickHouseRequestBlank<?>> removedBlanks = new ArrayList<>();
-                            ClickHouseRequestBlank<?> first = queue.poll(1, TimeUnit.SECONDS);
-                            if (first != null) {
-                                removedBlanks.add(first);
-                                queue.drainTo(removedBlanks);
-                            } else {
+                        Map<String, Integer> maxFlushBufferSizes = new HashMap<>();
+                        List<ClickHouseRequestBlank<?>> removedBlanks = new ArrayList<>();
+                        ClickHouseRequestBlank<?> first = queue.poll(1, TimeUnit.SECONDS);
+                        if (first != null) {
+                            removedBlanks.add(first);
+                            queue.drainTo(removedBlanks, MAX_ELEMENTS);
+                        } else {
+                            continue;
+                        }
+                        for (ClickHouseRequestBlank<?> blank : removedBlanks) {
+                            if (blank == null) {
+                                logger.warn("Null blank encountered");
                                 continue;
                             }
-                            for (ClickHouseRequestBlank<?> blank : removedBlanks) {
-                                if (blank == null) {
-                                    logger.warn("Null blank encountered");
-                                    continue;
-                                }
-                                List<?> values = blank.getValues();
-                                if (values == null || values.isEmpty()) {
-                                    logger.warn("Empty values for table {}", blank.getTargetTable());
-                                    continue;
-                                }
-                                blanks.computeIfAbsent(blank.getTargetTable(), k -> new ArrayList<>()).addAll(values);
-                                clientIndexes.computeIfAbsent(blank.getTargetTable(), k -> blank.getClientIndex());
-                                queueCounter.decrementAndGet();
+                            List<?> values = blank.getValues();
+                            if (values == null || values.isEmpty()) {
+                                logger.warn("Empty values for table {}", blank.getTargetTable());
+                                continue;
                             }
+                            blanks.computeIfAbsent(blank.getTargetTable(), k -> new ArrayList<>()).addAll(values);
+                            maxFlushBufferSizes.computeIfAbsent(
+                              blank.getTargetTable(), k -> blank.getMaxFlushBufferSize() * MAX_ELEMENTS);
+                            queueCounter.decrementAndGet();
                         }
                         for (Map.Entry<String, List<Object>> entry : blanks.entrySet()) {
-                            try {
-                                logger.info(
-                                  "Task Ready to load data to {}, batch size = {}, pending queue size = {}",
-                                  entry.getKey(),
-                                  entry.getValue().size(),
-                                  queueCounter.get()
-                                );
-                                long requestStartTime = System.currentTimeMillis();
-                                Client client = clients.get(clientIndexes.get(entry.getKey()));
-                                CompletableFuture<InsertResponse> future =
-                                  client.insert(entry.getKey(), entry.getValue());
-                                complete(requestStartTime, entry, future);
-                            } catch (Exception e) {
-                                logger.error("Task Error while inserting data", e);
-                                logFailedRecords(entry);
+                            String table = entry.getKey();
+                            List<Object> values = entry.getValue();
+                            Integer configVal = maxFlushBufferSizes.get(table);
+                            int maxChunkSize = configVal != null && configVal > 0 ? configVal : values.size();
+                            List<List<Object>> chunks = partition(values, maxChunkSize);
+
+                            for (List<Object> chunk : chunks) {
+                                try {
+                                    logger.info(
+                                      "Task Ready to load data to {}, batch size = {}, pending queue size = {}, id = {}",
+                                      entry.getKey(),
+                                      chunk.size(),
+                                      queueCounter.get(),
+                                      id
+                                    );
+                                    long requestStartTime = System.currentTimeMillis();
+                                    CompletableFuture<InsertResponse> future =
+                                      client.insert(table, chunk);
+                                    complete(requestStartTime, Map.entry(table, chunk), future);
+                                } catch (Exception e) {
+                                    logger.error("Task Error while inserting data, id = {}", id, e);
+                                    logFailedRecords(Map.entry(table, chunk));
+                                }
                             }
                         }
                     } catch (Throwable t) {
-                        logger.error("Writer task recovered from error", t);
+                        logger.error("Writer task recovered from error, id = {}", id, t);
                     }
                 }
             } finally {
-                logger.info("Task is finished");
+                logger.info("Task is finished, id = {}", id);
             }
+        }
+
+        private <T> List<List<T>> partition(List<T> list, int maxChunkSize) {
+            List<List<T>> parts = new ArrayList<>();
+            int size = list.size();
+            for (int i = 0; i < size; i += maxChunkSize) {
+                parts.add(list.subList(i, Math.min(size, i + maxChunkSize)));
+            }
+            return parts;
         }
 
         private void complete(long requestStartTime, Map.Entry<String, List<Object>> requestBlank, CompletableFuture<InsertResponse> future) {
             future.whenComplete((response, throwable) -> {
                 if (throwable != null) {
-                    logger.error("Task Complete Error while inserting data", throwable);
+                    logger.error("Task Complete Error while inserting data,  id = {}", id, throwable);
                     logFailedRecords(requestBlank);
                 } else {
                     OperationMetrics metrics = response.getMetrics();
                     Metric elapsedTime = metrics.getMetric(ELAPSED_TIME);
-                    logger.info("Task Successful send data to ClickHouse, pending queue size = {}, batch size = {}, target table = {}, time = {}",
+                    logger.info(
+                      "Task Successful send data to ClickHouse, pending queue size = {}, batch size = {}, target table = {}, time = {}, id = {}",
                       queueCounter.get(),
                       requestBlank.getValue().size(),
                       requestBlank.getKey(),
                       elapsedTime != null && elapsedTime.getLong() > 0 ?
                         TimeUnit.MILLISECONDS.convert(elapsedTime.getLong(), TimeUnit.NANOSECONDS) :
-                        System.currentTimeMillis() - requestStartTime);
+                        System.currentTimeMillis() - requestStartTime,
+                      id);
                 }
             });
         }
@@ -323,17 +354,13 @@ public class ClickHouseWriter implements AutoCloseable {
                        new ByteArrayInputStream(outputStream.toByteArray())) {
                     s3Client.putObject(
                       putObjectRequest, RequestBody.fromInputStream(inputStream, outputStream.size()));
-                    logger.info("Task Successful send data on s3, path = {}, batch size = {} ", pathName, requestBlank.getValue().size());
+                    logger.info("Task Successful send data on s3, path = {}, batch size = {}, id = {}", pathName, requestBlank.getValue().size(), id);
                 } catch (Exception e) {
-                    logger.error("Task Unknown exception while publishing data on s3 with path {} to S3", batchKey, e);
+                    logger.error("Task Unknown exception while publishing data on s3 with path {} to S3,  id = {}", batchKey, id, e);
                 }
             } catch (Exception e) {
-                logger.error("Task Unknown exception while publishing data on s3 with path {} to stream", batchKey, e);
+                logger.error("Task Unknown exception while publishing data on s3 with path {} to stream, id = {}", batchKey, id, e);
             }
-        }
-
-        private boolean isEmpty() {
-            return queues.stream().allMatch(Collection::isEmpty);
         }
 
         void setStopWorking() {
