@@ -41,6 +41,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static com.clickhouse.client.api.metrics.ServerMetrics.ELAPSED_TIME;
+import static com.clickhouse.client.api.metrics.ServerMetrics.NUM_BYTES_READ;
+import static com.clickhouse.client.api.metrics.ServerMetrics.NUM_BYTES_WRITTEN;
 
 public class ClickHouseWriter implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(ClickHouseWriter.class);
@@ -316,14 +318,18 @@ public class ClickHouseWriter implements AutoCloseable {
                 } else {
                     OperationMetrics metrics = response.getMetrics();
                     Metric elapsedTime = metrics.getMetric(ELAPSED_TIME);
+                    Metric bytesRead = metrics.getMetric(NUM_BYTES_READ);
+                    Metric bytesWritten = metrics.getMetric(NUM_BYTES_WRITTEN);
                     logger.info(
-                      "Task Successful send data to ClickHouse, pending queue size = {}, batch size = {}, target table = {}, time = {}, id = {}",
+                      "Task Successful send data to ClickHouse, pending queue size = {}, batch size = {}, target table = {}, time = {}, bytes read = {}, bytes written = {}, id = {}",
                       queueCounter.get(),
                       requestBlank.getValue().size(),
                       requestBlank.getKey(),
                       elapsedTime != null && elapsedTime.getLong() > 0 ?
                         TimeUnit.MILLISECONDS.convert(elapsedTime.getLong(), TimeUnit.NANOSECONDS) :
                         System.currentTimeMillis() - requestStartTime,
+                      bytesRead != null ? bytesRead.getLong() : 0,
+                      bytesWritten != null ? bytesWritten.getLong() : 0,
                       id);
                 }
             });
