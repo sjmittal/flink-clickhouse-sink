@@ -55,6 +55,7 @@ public class ClickHouseSinkManager implements AutoCloseable {
               .setConnectionRequestTimeout(60, ChronoUnit.SECONDS)
               .setConnectTimeout(60, ChronoUnit.SECONDS)
               .setSocketTimeout(30, ChronoUnit.SECONDS)
+              .setConnectionTTL(600, ChronoUnit.SECONDS)
               .build();
             clients.add(client);
         }
